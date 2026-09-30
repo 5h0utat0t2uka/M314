@@ -30,6 +30,8 @@
     devShells.${system}.default = pkgs.mkShellNoCC {
       packages = [
         pkgs.arduino-cli
+        pkgs.just
+        pkgs.clang
       ];
       ARDUINO_CTAGS_PATH = "${arduinoCtags}/bin";
     };

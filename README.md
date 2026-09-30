@@ -1,9 +1,17 @@
 # CoreS3 + HLK-LD2450
 
-![CoreS3](./docs/s3.png)
+![Motion Tracker](./docs/Motion_Tracker_detects_one_signal.webp)
 ![HLK-LD2450](./docs/ld2450.jpg)
+![CoreS3](./docs/s3.png)
 
-Arduino が配布する macOS 用 `ctags` は Intel 用で Apple Silicon ではそのまま実行できないため。このプロジェクトでは Arduino 公式の同じ `5.8-arduino11` ソースを Nix で ARM 向けにビルドし、`$ARDUINO_CTAGS_PATH` にパスを設定して `--build-property` で指定  
+| LD2450 | CoreS3 PORT.C |
+| --- | --- |
+| 5V | V（5V） |
+| RX | T（TX / GPIO17） |
+| TX | R（RX / GPIO18） |
+| GND | G（GND） |
+
+Arduino が配布する macOS 用 `ctags` は Intel 用で Apple Silicon ではそのまま実行できないため、このプロジェクトでは Arduino 公式の同じ `5.8-arduino11` ソースを Nix で ARM 向けにビルドし、`$ARDUINO_CTAGS_PATH` にパスを設定して `--build-property` で指定  
 
 `firmware/cores3_check/sketch.yaml` のプロファイルで、ボード用コアとM5Unified・M5GFX のバージョンを固定  
 CoreS3 の Quad PSRAM は `PSRAM=enabled` を明示
@@ -12,6 +20,7 @@ CoreS3 の Quad PSRAM は `PSRAM=enabled` を明示
 ```sh
 just                                  # コマンド一覧
 just boards                           # 接続ポート一覧
+just test                             # 通信パーサーのテスト（実機不要）
 just build                            # コンパイルのみ
 just upload /dev/cu.usbmodem1101      # ビルドと通常の書き込み
 ```
@@ -25,7 +34,28 @@ just upload /dev/cu.usbmodem1101      # ビルドと通常の書き込み
 just upload-erase /dev/cu.usbmodem1101
 ```
 
+## 操作と表示
+- CoreS3のスクリーンをタップで表示距離が **6m, 2m, 4m** と切り替え
+- スクリーン下部中央に最も近い対象の距離を大きく表示
+- スクリーン下部の左に表示範囲・相対角度・速度、右に対象番号と検出数・X/Y座標を表示
+- 起動後は約2秒間静止して、ジャイロの静止補正を行う（スクリーン長押しでリセット）
+
+| 表示 | 意味 |
+| --- | --- |
+| `N0` / `NO TARGET` | 通信は正常だが、現在の検出対象はない |
+| `N1`〜`N3` | センサーが報告した検出対象数（厳密な在室人数ではない） |
+| `X` / `Y` | 各対象の座標（mm） |
+| `V` | 各対象の速度（cm/s） |
+| `WAITING` | 起動後、まだ有効なデータを受信していない |
+| `TIMEOUT` | 最後の有効なデータから1秒以上経過した |
+
 ## Ref
+- [M314 Motion Tracker](https://avp.fandom.com/wiki/M314_Motion_Tracker)
+- [M5GFX 0.2.30 の描画API（drawSmoothLine / fillSmoothCircle）](https://github.com/m5stack/M5GFX/blob/0.2.30/src/lgfx/v1/LGFXBase.hpp)
+- [M5Unified IMU API](https://docs.m5stack.com/en/arduino/m5unified/imu_class)
+- [M5Unified 0.2.23 の IMU 公式サンプル](https://github.com/m5stack/M5Unified/blob/0.2.23/examples/Basic/Imu/Imu.ino)
+- [HLK-LD2450 公式通信仕様 V1.03（2.3節：受信フレーム）](https://h.hlktech.com/download/HLK-LD2450-24G/1/LD2450%20%E4%B8%B2%E5%8F%A3%E9%80%9A%E4%BF%A1%E5%8D%8F%E8%AE%AE%20V1.03.pdf)
+- [CoreS3 のピン配置（PORT.C）](https://docs.m5stack.com/en/core/CoreS3#pinmap)
 - [M5Stack CoreS3 の Arduino 手順](https://docs.m5stack.com/en/arduino/m5cores3/program)
 - [M5Stack ボード用パッケージ一覧](https://static-cdn.m5stack.com/resource/arduino/package_m5stack_index.json)
 - [Arduino CLI ビルドプロファイル仕様](https://github.com/arduino/arduino-cli/blob/master/docs/sketch-project-file.md)

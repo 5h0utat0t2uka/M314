@@ -6,6 +6,22 @@ default:
 boards:
   arduino-cli board list
 
+# Mac 上で通信パーサー・相対回転を検証（実機不要）
+test:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  test_dir="$(mktemp -d)"
+  trap 'rm -rf "$test_dir"' EXIT
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/ld2450_test.cpp -o "$test_dir/ld2450_test"
+  "$test_dir/ld2450_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/relative_heading_test.cpp -o "$test_dir/relative_heading_test"
+  "$test_dir/relative_heading_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/target_trail_test.cpp -o "$test_dir/target_trail_test"
+  "$test_dir/target_trail_test"
+
 # 固定した依存物でコンパイル
 build:
   arduino-cli compile --profile cores3 \
