@@ -33,6 +33,19 @@ int main() {
   assert(ld2450::encodeCommand(0xFE, nullptr, 0, request) == sizeof(exitRequest));
   assert(memcmp(request, exitRequest, sizeof(exitRequest)) == 0);
 
+  // Official tutorial: Bluetooth off/on followed by module restart. The prose
+  // value for ON in protocol V1.03 conflicts with its little-endian wire example.
+  const uint8_t bluetoothOff[] = {0, 0};
+  const uint8_t bluetoothOffRequest[] = {0xFD, 0xFC, 0xFB, 0xFA, 4, 0, 0xA4, 0, 0, 0, 4, 3, 2, 1};
+  assert(ld2450::encodeCommand(0xA4, bluetoothOff, 2, request) == sizeof(bluetoothOffRequest));
+  assert(memcmp(request, bluetoothOffRequest, sizeof(bluetoothOffRequest)) == 0);
+  const uint8_t bluetoothOnRequest[] = {0xFD, 0xFC, 0xFB, 0xFA, 4, 0, 0xA4, 0, 1, 0, 4, 3, 2, 1};
+  assert(ld2450::encodeCommand(0xA4, enable, 2, request) == sizeof(bluetoothOnRequest));
+  assert(memcmp(request, bluetoothOnRequest, sizeof(bluetoothOnRequest)) == 0);
+  const uint8_t restartRequest[] = {0xFD, 0xFC, 0xFB, 0xFA, 2, 0, 0xA3, 0, 4, 3, 2, 1};
+  assert(ld2450::encodeCommand(0xA3, nullptr, 0, request) == sizeof(restartRequest));
+  assert(memcmp(request, restartRequest, sizeof(restartRequest)) == 0);
+
   ld2450::AckParser parser;
   // Official C1 example: INCLUDE rectangle (+1000,+1000) to (-1000,+5000).
   const std::vector<uint8_t> queryAck = {
@@ -75,5 +88,13 @@ int main() {
   memcpy(embedded.data() + 12, setAck.data(), 4);
   memcpy(embedded.data() + 16, setAck.data() + 10, 4);
   assert(feed(parser, embedded) && parser.payloadSize == 26);
-  std::puts("LD2450 region filter protocol tests passed");
+  for (uint8_t command : {0xA4, 0xA3}) {
+    auto bluetoothAck = setAck;
+    bluetoothAck[6] = command;
+    assert(feed(parser, bluetoothAck));
+    assert(parser.command == (0x0100 | command) && parser.status == 0 && parser.payloadSize == 0);
+    bluetoothAck[8] = 1;
+    assert(feed(parser, bluetoothAck) && parser.status == 1);
+  }
+  std::puts("LD2450 region filter / Bluetooth protocol tests passed");
 }

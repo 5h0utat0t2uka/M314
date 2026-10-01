@@ -5,6 +5,7 @@
 #include "relative_heading.h"
 #include "target_trail.h"
 #include "region_filter.h"
+#include "display_diff.h"
 
 constexpr int kRadarRx = 18;  // PORT.C R <- LD2450 TX
 constexpr int kRadarTx = 17;  // PORT.C T -> LD2450 RX
@@ -28,6 +29,8 @@ constexpr uint32_t kPanelFrameMs = 100;
 HardwareSerial radarSerial(1);
 M5Canvas screen(&M5.Display);
 M5Canvas radarBackdrop(&M5.Display);
+M5Canvas fixedGrid(&M5.Display);
+M5Canvas displayedFrame(&M5.Display);
 ld2450::Parser radar;
 RelativeHeading heading;
 TargetTrail trails[3];
@@ -37,6 +40,7 @@ uint32_t lastImuPollMs = 0;
 float cachedRotation = NAN;
 unsigned rangeMeters = 6;
 bool screenReady = false;
+bool displayInitialized = false;
 
 void drawText(const char* text, int x, int y, uint16_t color, int size = 1,
               uint16_t background = kBackground,
@@ -83,13 +87,16 @@ void drawRadial(float inner, float outer, float angle, uint16_t color) {
                   polarX(outer, angle), polarY(outer, angle), color);
 }
 
-void drawGrid(float rotation) {
+void drawFixedGrid() {
   constexpr float inner = kRadius * 0.45f;
   drawRing(kRadius - 1, kGrid);
   drawRing(kRadius, kBlue);
   drawRing(inner + 1, kGrid);
   drawRing(inner, kMuted);
+}
 
+void drawRotatingGrid(float rotation) {
+  constexpr float inner = kRadius * 0.45f;
   // The semicircle stays forward-facing; its spokes and bracket marks rotate.
   // Target positions already use the sensor frame and must not rotate twice.
   for (int bearing = -180; bearing < 180; bearing += 15) {
@@ -183,6 +190,31 @@ void drawStatusPanel() {
   screen.fillRect(tangent + 1, 216, 319 - 2 * tangent, 1, kBackground);
 }
 
+void presentScreen(int rows) {
+  const auto* current = static_cast<const uint16_t*>(screen.getBuffer());
+  auto* previous = static_cast<uint16_t*>(displayedFrame.getBuffer());
+  bool writing = false;
+  display_diff::forEachRegion(current, previous, rows, !displayInitialized,
+      [&](int x, int y, int w, int h) {
+        if (!writing) {
+          M5.Display.startWrite();
+          writing = true;
+        }
+        // Clip the destination, retaining the source's full 320-pixel stride.
+        M5.Display.setClipRect(x, y, w, h);
+        screen.pushSprite(0, 0);
+        for (int row = y; row < y + h; ++row) {
+          const int offset = row * display_diff::width + x;
+          memcpy(previous + offset, current + offset, w * sizeof(uint16_t));
+        }
+      });
+  if (writing) {
+    M5.Display.clearClipRect();
+    M5.Display.endWrite();
+  }
+  displayInitialized = true;
+}
+
 void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   if (!screenReady) return;
   const bool fresh = radar.fresh(nowMs);
@@ -192,8 +224,8 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   // Reuse the AA grid while stationary. 0.15 degrees is <0.5 px at the rim.
   if (!isfinite(cachedRotation) ||
       fabsf(RelativeHeading::wrap(rotation - cachedRotation)) >= 0.15f) {
-    screen.fillRect(0, 0, 320, kOriginY + 1, kBackground);
-    drawGrid(rotation);
+    fixedGrid.pushSprite(&screen, 0, 0);
+    drawRotatingGrid(rotation);
     screen.pushSprite(&radarBackdrop, 0, 0);
     cachedRotation = rotation;
   } else {
@@ -232,10 +264,7 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   }
   screen.clearClipRect();
   if (!updatePanel) {
-    // 105,600 bytes instead of 153,600: do not transfer the unchanged footer.
-    M5.Display.setClipRect(0, 0, 320, kOriginY + 1);
-    screen.pushSprite(0, 0);
-    M5.Display.clearClipRect();
+    presentScreen(kOriginY + 1);
     return;
   }
 
@@ -311,10 +340,10 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   }
   drawText(text, 308, secondRowY, kPanelText, 1, kPanelBackground,
            lgfx::textdatum_t::top_right);
-  screen.pushSprite(0, 0);
+  presentScreen(240);
 }
 
-// Region changes are explicit USB-console commands, never boot-time writes.
+// Sensor settings are explicit USB-console commands, never boot-time writes.
 bool radarCommand(uint16_t command, const uint8_t* payload, size_t length,
                   size_t expectedPayload, ld2450::AckParser& ack) {
   uint8_t request[38];
@@ -433,6 +462,49 @@ void configureRegionFilter(const char* action) {
   for (auto& trail : trails) trail.count = 0;
 }
 
+void configureBluetooth(bool enabled) {
+  Serial.printf("Bluetoothを%sに設定します。\n", enabled ? "有効" : "無効");
+  ld2450::AckParser ack;
+  const uint8_t enableConfig[] = {1, 0};
+  // Follow the official tutorial's wire bytes: on = 01 00, off = 00 00.
+  const uint8_t setting[] = {static_cast<uint8_t>(enabled ? 1 : 0), 0};
+  const bool entered = radarCommand(0x00FF, enableConfig, sizeof(enableConfig), 4, ack);
+  const bool saved = entered && radarCommand(0x00A4, setting, sizeof(setting), 0, ack);
+  if (!saved) {
+    // A lost ACK can leave a saved setting pending. Do not reboot on failure.
+    radarCommand(0x00FE, nullptr, 0, 0, ack);
+    Serial.println("Bluetooth設定を確認できませんでした。未変更または反映待ちの可能性があります。自動再試行・再起動は行いません。");
+  } else {
+    // The module replies before rebooting. A3 is sent while configuration is enabled.
+    Serial.println("Bluetooth設定の保存ACKを受信しました。センサーを再起動します。");
+    if (!radarCommand(0x00A3, nullptr, 0, 0, ack)) {
+      radarCommand(0x00FE, nullptr, 0, 0, ack);
+      Serial.println("再起動ACKを確認できませんでした。設定は保存済みですが、反映状態は未確認です。");
+    } else {
+      // Discard reports buffered before/during reboot; require a fresh UART frame.
+      delay(300);
+      for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) radarSerial.read();
+      radar = ld2450::Parser{};
+      const uint32_t started = millis();
+      while (!radar.received && uint32_t(millis() - started) < 5000) {
+        for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) {
+          const int byte = radarSerial.read();
+          if (byte >= 0 && radar.push(static_cast<uint8_t>(byte), millis())) break;
+        }
+        if (!radar.received) delay(1);
+      }
+      if (radar.received) {
+        Serial.printf("Bluetooth %s: 保存・再起動ACKとUART受信再開を確認しました。BLE電波の状態は未検証です。\n",
+                      enabled ? "ON" : "OFF");
+      } else {
+        Serial.println("保存・再起動ACKは受信しましたが、UART受信が再開しません。電源と配線を確認してください。");
+      }
+    }
+  }
+  radar = ld2450::Parser{};
+  for (auto& trail : trails) trail.count = 0;
+}
+
 void pollConsole() {
   static char line[48];
   static size_t used = 0;
@@ -448,7 +520,9 @@ void pollConsole() {
         else if (strcmp(line, "filter off") == 0) configureRegionFilter("off");
         else if (strcmp(line, "filter restore") == 0) configureRegionFilter("restore");
         else if (strcmp(line, "filter status") == 0) configureRegionFilter("status");
-        else Serial.println("Commands: filter status | filter near | filter off | filter restore");
+        else if (strcmp(line, "bluetooth off") == 0) configureBluetooth(false);
+        else if (strcmp(line, "bluetooth on") == 0) configureBluetooth(true);
+        else Serial.println("Commands: filter status | filter near | filter off | filter restore | bluetooth off | bluetooth on");
       }
       used = 0;
       overflow = false;
@@ -480,8 +554,20 @@ void setup() {
   radarBackdrop.setColorDepth(16);
   radarBackdrop.setPsram(true);
   screenReady = screenReady && radarBackdrop.createSprite(320, kOriginY + 1) != nullptr;
+  fixedGrid.setColorDepth(16);
+  fixedGrid.setPsram(true);
+  screenReady = screenReady && fixedGrid.createSprite(320, kOriginY + 1) != nullptr;
+  displayedFrame.setColorDepth(16);
+  displayedFrame.setPsram(true);
+  screenReady = screenReady && displayedFrame.createSprite(320, 240) != nullptr;
   screen.setTextWrap(false);
-  if (!screenReady) {
+  if (screenReady) {
+    screen.fillScreen(kBackground);
+    screen.setClipRect(0, 0, 320, kOriginY + 1);
+    drawFixedGrid();
+    screen.pushSprite(&fixedGrid, 0, 0);
+    screen.clearClipRect();
+  } else {
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
     M5.Display.setTextSize(2);

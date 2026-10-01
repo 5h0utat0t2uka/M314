@@ -6,7 +6,7 @@ default:
 boards:
   arduino-cli board list
 
-# Mac 上で通信パーサー・相対回転を検証（実機不要）
+# Mac 上で通信パーサー・相対回転・画面差分を検証（実機不要）
 test:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -24,6 +24,9 @@ test:
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     tests/region_filter_test.cpp -o "$test_dir/region_filter_test"
   "$test_dir/region_filter_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/display_diff_test.cpp -o "$test_dir/display_diff_test"
+  "$test_dir/display_diff_test"
 
 # USB コンソールから LD2450 の領域設定・解除・確認（Ctrl+C で終了）
 monitor port:
