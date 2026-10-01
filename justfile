@@ -21,6 +21,13 @@ test:
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     tests/target_trail_test.cpp -o "$test_dir/target_trail_test"
   "$test_dir/target_trail_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/region_filter_test.cpp -o "$test_dir/region_filter_test"
+  "$test_dir/region_filter_test"
+
+# USB コンソールから LD2450 の領域設定・解除・確認（Ctrl+C で終了）
+monitor port:
+  arduino-cli monitor --port "$1" --config baudrate=115200
 
 # 固定した依存物でコンパイル
 build:

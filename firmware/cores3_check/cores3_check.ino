@@ -1,8 +1,10 @@
 #include <M5Unified.h>
+#include <Preferences.h>
 #include <math.h>
 #include "ld2450.h"
 #include "relative_heading.h"
 #include "target_trail.h"
+#include "region_filter.h"
 
 constexpr int kRadarRx = 18;  // PORT.C R <- LD2450 TX
 constexpr int kRadarTx = 17;  // PORT.C T -> LD2450 RX
@@ -18,8 +20,8 @@ constexpr uint16_t kBlue = 0x1BFC;  // #187FE5 encoded as RGB565
 constexpr uint16_t kBright = 0x957E;
 constexpr uint16_t kPanelBackground = 0x1BFC;  // #187FE5 encoded as RGB565
 constexpr uint16_t kPanelText = 0xFFFF;  // #ffffff encoded as RGB565
-constexpr uint16_t kDistance = 0xFA8A;
-constexpr uint16_t kRipple = 0x553F;  // #52a7fa encoded as RGB565
+constexpr uint16_t kDistance = 0xE105; // #e6222f encoded as RGB565
+constexpr uint16_t kRipple = 0x75DF;  // #70b8ff encoded as RGB565
 constexpr uint32_t kRadarFrameMs = 20;
 constexpr uint32_t kPanelFrameMs = 100;
 
@@ -241,21 +243,43 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   // A 13-pixel black gap separates the radar baseline from the shorter panels.
   drawStatusPanel();
 
-  snprintf(text, sizeof(text), "%05.2f", nearestMm / 1000.0f);
-  const char* distanceText = nearest >= 0 ? text : "--.--";
-  // Center the whole value + unit, with both fonts on the same baseline.
+  char wholeMeters[8] = "--";
+  char fractionalMeters[4] = "--";
+  if (nearest >= 0) {
+    // Round once before splitting so 1.995 m carries into 02 / 00 correctly.
+    const unsigned centimeters = static_cast<unsigned>(lroundf(nearestMm / 10.0f));
+    snprintf(wholeMeters, sizeof(wholeMeters), "%02u", centimeters / 100);
+    snprintf(fractionalMeters, sizeof(fractionalMeters), "%02u", centimeters % 100);
+  }
+  // Large integer, small hundredths above the unit, centered as a single group.
+  constexpr int distanceBaselineY = 208;
+  // FreeSans18 digits extend 24 px above the baseline; FreeSans9 digits 12 px.
+  // Align their tops: 25 px total = 13 px hundredths + 2 px gap + 10 px unit.
+  constexpr int fractionBaselineY = distanceBaselineY - 24 + 12;
+  // FreeSans18 '.' extends 3 px above its baseline: align its ink to the digit top.
+  constexpr int separatorBaselineY = distanceBaselineY - 24 + 3;
+  constexpr int separatorGap = 2;
   screen.setFont(&fonts::FreeSans18pt7b);
   screen.setTextSize(1);
-  const int distanceWidth = screen.textWidth(distanceText);
+  const int wholeWidth = screen.textWidth(wholeMeters);
+  const int separatorWidth = screen.textWidth(".");
   screen.setFont(&fonts::FreeSans9pt7b);
+  const int fractionWidth = screen.textWidth(fractionalMeters);
   const int unitWidth = screen.textWidth("m");
-  const int distanceX = kOriginX - (distanceWidth + 4 + unitWidth) / 2;
-  screen.setTextColor(kDistance, kBackground);
+  const int columnWidth = fractionWidth > unitWidth ? fractionWidth : unitWidth;
+  const int distanceX = kOriginX - (wholeWidth + separatorGap * 2 + separatorWidth + columnWidth) / 2;
+  const int separatorX = distanceX + wholeWidth + separatorGap;
+  const int columnX = separatorX + separatorWidth + separatorGap;
+  // The panel is already cleared each frame. Transparent text prevents the
+  // font's descent/background rectangle from erasing the blue bottom bridge.
+  screen.setTextColor(kDistance);
   screen.setTextDatum(lgfx::textdatum_t::baseline_left);
   screen.setFont(&fonts::FreeSans18pt7b);
-  screen.drawString(distanceText, distanceX, 206);
+  screen.drawString(wholeMeters, distanceX, distanceBaselineY);
+  screen.drawString(".", separatorX, separatorBaselineY);
   screen.setFont(&fonts::FreeSans9pt7b);
-  screen.drawString("m", distanceX + distanceWidth + 4, 206);
+  screen.drawString(fractionalMeters, columnX + (columnWidth - fractionWidth) / 2, fractionBaselineY);
+  screen.drawString("m", columnX + (columnWidth - unitWidth) / 2, distanceBaselineY);
 
   // Left: range, relative rotation, speed, and exceptional link states.
   snprintf(text, sizeof(text), "RNG %um", rangeMeters);
@@ -265,7 +289,8 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   } else {
     snprintf(text, sizeof(text), "%s", imuFresh ? "STILL 2s" : "IMU --");
   }
-  drawText(text, 12, 194, kPanelText, 1, kPanelBackground);
+  drawText(text, 12, 194, imuFresh && !heading.ready ? kDistance : kPanelText,
+           1, kPanelBackground);
   if (nearest >= 0) {
     snprintf(text, sizeof(text), "V %+dcm/s", static_cast<int>(radar.targets[nearest].speedCmS));
   } else {
@@ -298,6 +323,152 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   screen.pushSprite(0, 0);
 }
 
+// Region changes are explicit USB-console commands, never boot-time writes.
+bool radarCommand(uint16_t command, const uint8_t* payload, size_t length,
+                  size_t expectedPayload, ld2450::AckParser& ack) {
+  uint8_t request[38];
+  const size_t size = ld2450::encodeCommand(command, payload, length, request);
+  if (!size) return false;
+  // Discard old reports/ACKs before starting a new transaction.
+  for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) radarSerial.read();
+  ack = ld2450::AckParser{};
+  if (radarSerial.write(request, size) != size) {
+    Serial.println("ERROR: UART write failed");
+    return false;
+  }
+  const uint32_t started = millis();
+  while (uint32_t(millis() - started) < 1500) {
+    for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) {
+      const int byte = radarSerial.read();
+      if (byte < 0 || !ack.push(static_cast<uint8_t>(byte))) continue;
+      if (ack.command != (command | 0x0100)) continue;
+      if (ack.status != 0 || ack.payloadSize != expectedPayload) {
+        Serial.printf("ERROR: command %04X ACK status=%u, payload=%u\n",
+                      command, ack.status, unsigned(ack.payloadSize));
+        return false;
+      }
+      return true;
+    }
+    delay(1);
+  }
+  Serial.printf("ERROR: command %04X timed out (check TX/RX and sensor power)\n", command);
+  return false;
+}
+
+bool readRegionFilter(ld2450::RegionFilter& filter) {
+  ld2450::AckParser ack;
+  if (!radarCommand(0x00C1, nullptr, 0, 26, ack)) return false;
+  memcpy(filter.bytes, ack.payload, sizeof(filter.bytes));
+  if (filter.mode() > 2) {
+    Serial.println("ERROR: unsupported filter mode");
+    return false;
+  }
+  return true;
+}
+
+void printRegionFilter(const ld2450::RegionFilter& filter) {
+  Serial.printf("MODE %u (%s)\n", filter.mode(),
+                filter.mode() == 0 ? "OFF" : filter.mode() == 1 ? "INCLUDE" : "EXCLUDE");
+  for (size_t region = 0; region < 3; ++region) {
+    Serial.printf("REGION %u: (%d, %d) to (%d, %d) mm\n", unsigned(region + 1),
+                  filter.coordinate(region, 0), filter.coordinate(region, 1),
+                  filter.coordinate(region, 2), filter.coordinate(region, 3));
+  }
+}
+
+void configureRegionFilter(const char* action) {
+  Serial.printf("FILTER %s: starting\n", action);
+  ld2450::AckParser ack;
+  const uint8_t enable[] = {1, 0};
+  bool ok = radarCommand(0x00FF, enable, sizeof(enable), 4, ack);
+  ld2450::RegionFilter current;
+  if (ok) ok = readRegionFilter(current);
+  if (ok) printRegionFilter(current);
+  Preferences backup;
+  bool backupOpen = false;
+  bool restoring = false;
+  if (ok && strcmp(action, "status") != 0) {
+    ld2450::RegionFilter desired = current;
+    if (strcmp(action, "off") == 0) {
+      // Disable filtering while retaining stored rectangles.
+      ld2450::writeU16(desired.bytes, 0);
+    } else {
+      backupOpen = backup.begin("ld2450-filter", false);
+      ok = backupOpen;
+      if (!ok) Serial.println("ERROR: cannot open filter backup");
+      if (ok && strcmp(action, "restore") == 0) {
+        restoring = true;
+        ok = backup.getBytesLength("original") == sizeof(desired.bytes) &&
+             backup.getBytes("original", desired.bytes, sizeof(desired.bytes)) == sizeof(desired.bytes) &&
+             desired.mode() <= 2;
+        if (!ok) Serial.println("ERROR: no valid original settings saved; use filter off to disable");
+      } else if (ok) {
+        desired = ld2450::nearExclusion();
+        // Keep the first pre-trial state, including all three rectangles.
+        // Never replace a backup on repeat commands or after a restart.
+        if (!backup.isKey("original")) {
+          ok = backup.putBytes("original", current.bytes, sizeof(current.bytes)) == sizeof(current.bytes);
+          if (!ok) Serial.println("ERROR: cannot save original settings; sensor unchanged");
+        } else if (backup.getBytesLength("original") != sizeof(current.bytes)) {
+          ok = false;
+          Serial.println("ERROR: invalid backup; sensor unchanged");
+        }
+      }
+    }
+    if (ok && !(desired == current)) {
+      ok = radarCommand(0x00C2, desired.bytes, sizeof(desired.bytes), 0, ack);
+    }
+    if (ok) {
+      ld2450::RegionFilter actual;
+      ok = readRegionFilter(actual);
+      if (ok) {
+        printRegionFilter(actual);
+        ok = actual == desired;
+        if (!ok) Serial.println("ERROR: filter readback does not match request");
+      }
+    }
+  }
+  // Always try to leave configuration mode, including after a lost/failed ACK.
+  const bool exited = radarCommand(0x00FE, nullptr, 0, 0, ack);
+  ok = ok && exited;
+  if (ok && restoring && !backup.remove("original")) {
+    Serial.println("WARNING: settings restored, but backup cleanup failed");
+  }
+  if (backupOpen) backup.end();
+  Serial.println(ok ? "FILTER OK (readback verified; normal detection resumed)"
+                    : "FILTER FAILED: state may be unchanged or partially applied; run filter status");
+  // Wait for fresh reports after the configuration pause; remove stale trails.
+  radar = ld2450::Parser{};
+  for (auto& trail : trails) trail.count = 0;
+}
+
+void pollConsole() {
+  static char line[48];
+  static size_t used = 0;
+  static bool overflow = false;
+  for (size_t i = 0; i < 64 && Serial.available(); ++i) {
+    const int byte = Serial.read();
+    if (byte < 0) break;
+    if (byte == '\r' || byte == '\n') {
+      if (overflow) Serial.println("ERROR: command too long");
+      else if (used) {
+        line[used] = '\0';
+        if (strcmp(line, "filter near") == 0) configureRegionFilter("near");
+        else if (strcmp(line, "filter off") == 0) configureRegionFilter("off");
+        else if (strcmp(line, "filter restore") == 0) configureRegionFilter("restore");
+        else if (strcmp(line, "filter status") == 0) configureRegionFilter("status");
+        else Serial.println("Commands: filter status | filter near | filter off | filter restore");
+      }
+      used = 0;
+      overflow = false;
+    } else if (byte < 32 || byte > 126 || used == sizeof(line) - 1) {
+      overflow = true;
+    } else if (!overflow) {
+      line[used++] = static_cast<char>(byte);
+    }
+  }
+}
+
 void setup() {
   auto config = M5.config();
   config.internal_mic = false;
@@ -305,6 +476,7 @@ void setup() {
   config.internal_imu = true;
   config.output_power = true;  // Supply 5 V to the external ports.
   M5.begin(config);
+  Serial.begin(115200);
   // Keep library offsets fixed while our stationary bias estimate is in use.
   M5.Imu.setCalibration(0, 0, 0);
   M5.Touch.setHoldThresh(800);
@@ -333,6 +505,7 @@ void setup() {
 
 void loop() {
   M5.update();
+  pollConsole();
   const auto touch = M5.Touch.getDetail();
   if (touch.wasClicked()) {
     rangeMeters = rangeMeters == 6 ? 2 : rangeMeters + 2;
