@@ -4,7 +4,7 @@
 
 This project uses HLK-LD2450 and M5Stack CoreS3 to recreate the M314 Motion Tracker — a piece of USCM equipment featured in the movie *Aliens*.  
 
-It lets you experience the atmosphere of the film "anytime, anywhere"!
+It lets you experience the atmosphere of the film "Anytime, anywhere"!
 
 ---
 
@@ -17,3 +17,7 @@ It lets you experience the atmosphere of the film "anytime, anywhere"!
 | RX | T（TX / GPIO17） |
 | TX | R（RX / GPIO18） |
 | GND | G（GND） |
+
+> [!TIP]  
+> By design, the HLK-LD2450 may also detect moving objects behind the sensor.  
+> If this occurs, use a metal shield or back plate to suppress it.

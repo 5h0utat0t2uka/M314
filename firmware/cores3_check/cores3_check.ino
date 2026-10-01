@@ -39,9 +39,10 @@ unsigned rangeMeters = 6;
 bool screenReady = false;
 
 void drawText(const char* text, int x, int y, uint16_t color, int size = 1,
-              uint16_t background = kBackground) {
+              uint16_t background = kBackground,
+              lgfx::textdatum_t datum = lgfx::textdatum_t::top_left) {
   screen.setFont(&fonts::Font0);
-  screen.setTextDatum(lgfx::textdatum_t::top_left);
+  screen.setTextDatum(datum);
   screen.setTextSize(size);
   screen.setTextColor(color, background);
   screen.drawString(text, x, y);
@@ -281,45 +282,35 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   screen.drawString(fractionalMeters, columnX + (columnWidth - fractionWidth) / 2, fractionBaselineY);
   screen.drawString("m", columnX + (columnWidth - unitWidth) / 2, distanceBaselineY);
 
-  // Left: range, relative rotation, speed, and exceptional link states.
+  // Two rows per side, with the right column aligned to the panel's outer edge.
+  constexpr int firstRowY = 190;
+  constexpr int secondRowY = 204;
   snprintf(text, sizeof(text), "RNG %um", rangeMeters);
-  drawText(text, 12, 184, kPanelText, 1, kPanelBackground);
+  drawText(text, 12, firstRowY, kPanelText, 1, kPanelBackground);
   if (imuFresh && heading.ready) {
     snprintf(text, sizeof(text), "REL %+04d", static_cast<int>(lroundf(heading.degrees)));
   } else {
     snprintf(text, sizeof(text), "%s", imuFresh ? "STILL 2s" : "IMU --");
   }
-  drawText(text, 12, 194, imuFresh && !heading.ready ? kDistance : kPanelText,
+  drawText(text, 12, secondRowY, imuFresh && !heading.ready ? kDistance : kPanelText,
            1, kPanelBackground);
-  if (nearest >= 0) {
-    snprintf(text, sizeof(text), "V %+dcm/s", static_cast<int>(radar.targets[nearest].speedCmS));
-  } else {
-    snprintf(text, sizeof(text), "V --cm/s");
-  }
-  drawText(text, 12, 204, kPanelText, 1, kPanelBackground);
-  if (!fresh) {
-    drawText(radar.received ? "TIMEOUT" : "WAITING", 12, 214, kPanelText, 1, kPanelBackground);
-  } else if (count == 0) {
-    drawText("NO TARGET", 12, 214, kPanelText, 1, kPanelBackground);
-  }
 
-  // Right: slot/count and coordinates.
+  // Right: nearest slot/count and its speed. N-- distinguishes a stale link from N0.
   if (fresh) {
     if (nearest >= 0) snprintf(text, sizeof(text), "T%d N%u", nearest + 1, count);
     else snprintf(text, sizeof(text), "T-- N0");
   } else {
     snprintf(text, sizeof(text), "T-- N--");
   }
-  drawText(text, 236, 184, kPanelText, 1, kPanelBackground);
+  drawText(text, 308, firstRowY, kPanelText, 1, kPanelBackground,
+           lgfx::textdatum_t::top_right);
   if (nearest >= 0) {
-    snprintf(text, sizeof(text), "X %+dmm", static_cast<int>(radar.targets[nearest].xMm));
-    drawText(text, 236, 194, kPanelText, 1, kPanelBackground);
-    snprintf(text, sizeof(text), "Y %+dmm", static_cast<int>(radar.targets[nearest].yMm));
-    drawText(text, 236, 204, kPanelText, 1, kPanelBackground);
+    snprintf(text, sizeof(text), "V %+dcm/s", static_cast<int>(radar.targets[nearest].speedCmS));
   } else {
-    drawText("X --mm", 236, 194, kPanelText, 1, kPanelBackground);
-    drawText("Y --mm", 236, 204, kPanelText, 1, kPanelBackground);
+    snprintf(text, sizeof(text), "V --cm/s");
   }
+  drawText(text, 308, secondRowY, kPanelText, 1, kPanelBackground,
+           lgfx::textdatum_t::top_right);
   screen.pushSprite(0, 0);
 }
 
