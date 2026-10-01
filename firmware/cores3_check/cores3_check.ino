@@ -3,7 +3,7 @@
 #include <math.h>
 #include "ld2450.h"
 #include "relative_heading.h"
-#include "target_trail.h"
+#include "scan_snapshot.h"
 #include "region_filter.h"
 #include "display_diff.h"
 
@@ -33,7 +33,14 @@ M5Canvas fixedGrid(&M5.Display);
 M5Canvas displayedFrame(&M5.Display);
 ld2450::Parser radar;
 RelativeHeading heading;
-TargetTrail trails[3];
+ScanSnapshot scan;
+constexpr int kMarkerRadius = 10;
+constexpr int kMarkerBlur = 3;
+constexpr int kMarkerExtent = kMarkerRadius + kMarkerBlur;
+constexpr uint8_t kMarkerOpacity = 128;  // 50% opacity = 50% transparency. (255 × 0.5 ≒ 128)
+uint8_t markerAlpha[kMarkerExtent * 2 + 1][kMarkerExtent * 2 + 1] = {};
+unsigned drawnRangeMeters = 0;
+int drawnRipplePhase = -1;
 uint32_t lastDrawMs = 0;
 uint32_t lastPanelMs = 0;
 uint32_t lastImuPollMs = 0;
@@ -125,13 +132,56 @@ void drawRotatingGrid(float rotation) {
   screen.drawSmoothLine(polarX(inner, 90), kOriginY, 314, kOriginY, kBlue);
 }
 
-void drawRipple(uint32_t nowMs) {
-  // One 1-pixel AA arc expands for 300 ms, then stays absent for 1000 ms.
-  // This visual effect never gates reception or target updates.
-  const uint32_t phaseMs = nowMs % 1300;
-  if (phaseMs >= 300) return;
-  const float radius = kRadius * phaseMs / 300.0f;
-  if (radius >= 1) drawRing(radius, kRipple);
+void blendPixel(int x, int y, uint16_t color, unsigned alpha) {
+  if (!alpha) return;
+  const uint16_t background = screen.readPixel(x, y);
+  const unsigned r = (((color >> 11) & 31) * alpha +
+                      ((background >> 11) & 31) * (255 - alpha) + 127) / 255;
+  const unsigned g = (((color >> 5) & 63) * alpha +
+                      ((background >> 5) & 63) * (255 - alpha) + 127) / 255;
+  const unsigned b = ((color & 31) * alpha + (background & 31) * (255 - alpha) + 127) / 255;
+  screen.drawPixel(x, y, uint16_t((r << 11) | (g << 5) | b));
+}
+
+void drawRipple(uint32_t phaseMs) {
+  if (phaseMs >= ScanSnapshot::sweepMs) return;
+  const float radius = kRadius * phaseMs / float(ScanSnapshot::sweepMs);
+  if (radius < 1) return;
+  drawRing(radius, kRipple);
+}
+
+// Cache a radius-10 disk blurred with a separable 7-tap binomial kernel.
+// Only this tiny alpha mask is filtered, once at startup; the screen is not blurred.
+void initializeMarker() {
+  constexpr int kernel[] = {1, 6, 15, 20, 15, 6, 1};
+  for (int y = -kMarkerExtent; y <= kMarkerExtent; ++y) {
+    for (int x = -kMarkerExtent; x <= kMarkerExtent; ++x) {
+      unsigned weight = 0;
+      for (int dy = -kMarkerBlur; dy <= kMarkerBlur; ++dy) {
+        for (int dx = -kMarkerBlur; dx <= kMarkerBlur; ++dx) {
+          const int sx = x - dx, sy = y - dy;
+          if (sx * sx + sy * sy <= kMarkerRadius * kMarkerRadius) {
+            weight += kernel[dx + kMarkerBlur] * kernel[dy + kMarkerBlur];
+          }
+        }
+      }
+      markerAlpha[y + kMarkerExtent][x + kMarkerExtent] =
+          (weight * kMarkerOpacity + 2048) / 4096;
+    }
+  }
+}
+
+void drawTargetMarker(int cx, int cy) {
+  for (int dy = -kMarkerExtent; dy <= kMarkerExtent; ++dy) {
+    const int y = cy + dy;
+    if (y < 0 || y > kOriginY) continue;
+    for (int dx = -kMarkerExtent; dx <= kMarkerExtent; ++dx) {
+      const int x = cx + dx;
+      if (x < 0 || x >= 320) continue;
+      const unsigned alpha = markerAlpha[dy + kMarkerExtent][dx + kMarkerExtent];
+      blendPixel(x, y, kBright, alpha);
+    }
+  }
 }
 
 uint16_t dimColor(uint16_t color, float brightness) {
@@ -139,26 +189,6 @@ uint16_t dimColor(uint16_t color, float brightness) {
   const unsigned g = ((color >> 5) & 63) * brightness;
   const unsigned b = (color & 31) * brightness;
   return (r << 11) | (g << 5) | b;
-}
-
-void drawTrails(uint32_t nowMs, float rangeMm) {
-  for (auto& trail : trails) {
-    trail.expire(nowMs);
-    for (size_t i = 1; i < trail.count; ++i) {
-      const auto& a = trail.points[i - 1];
-      const auto& b = trail.points[i];
-      // Do not join across a part of the path outside the displayed semicircle.
-      if (a.yMm < 0 || b.yMm < 0 || hypotf(a.xMm, a.yMm) > rangeMm ||
-          hypotf(b.xMm, b.yMm) > rangeMm) continue;
-      const int ax = kOriginX + lroundf(a.xMm * kRadius / rangeMm);
-      const int ay = kOriginY - lroundf(a.yMm * kRadius / rangeMm);
-      const int bx = kOriginX + lroundf(b.xMm * kRadius / rangeMm);
-      const int by = kOriginY - lroundf(b.yMm * kRadius / rangeMm);
-      if (ax == bx && ay == by) continue;
-      const float brightness = 0.65f * (1 - uint32_t(nowMs - a.timeMs) / float(TargetTrail::lifetimeMs));
-      screen.drawSmoothLine(ax, ay, bx, by, dimColor(kBlue, brightness));
-    }
-  }
 }
 
 void drawStatusPanel() {
@@ -220,28 +250,38 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   const bool fresh = radar.fresh(nowMs);
   const bool imuFresh = heading.fresh(nowMs);
   const float rotation = imuFresh && heading.ready ? heading.degrees : 0;
-  screen.setClipRect(0, 0, 320, kOriginY + 1);
-  // Reuse the AA grid while stationary. 0.15 degrees is <0.5 px at the rim.
-  if (!isfinite(cachedRotation) ||
-      fabsf(RelativeHeading::wrap(rotation - cachedRotation)) >= 0.15f) {
-    fixedGrid.pushSprite(&screen, 0, 0);
-    drawRotatingGrid(rotation);
-    screen.pushSprite(&radarBackdrop, 0, 0);
-    cachedRotation = rotation;
-  } else {
-    radarBackdrop.pushSprite(&screen, 0, 0);
+  const bool snapshotChanged = scan.update(nowMs, radar);
+  const bool gridChanged = !isfinite(cachedRotation) ||
+      fabsf(RelativeHeading::wrap(rotation - cachedRotation)) >= 0.15f;
+  const int ripplePhase = fresh && scan.phaseMs < ScanSnapshot::sweepMs
+      ? static_cast<int>(scan.phaseMs) : -1;
+  const bool redrawRadar = gridChanged || snapshotChanged ||
+      rangeMeters != drawnRangeMeters || ripplePhase != drawnRipplePhase;
+  updatePanel = updatePanel || snapshotChanged;
+  if (!redrawRadar && !updatePanel) return;
+  if (redrawRadar) {
+    screen.setClipRect(0, 0, 320, kOriginY + 1);
+    if (gridChanged) {
+      fixedGrid.pushSprite(&screen, 0, 0);
+      drawRotatingGrid(rotation);
+      screen.pushSprite(&radarBackdrop, 0, 0);
+      cachedRotation = rotation;
+    } else {
+      radarBackdrop.pushSprite(&screen, 0, 0);
+    }
+    if (ripplePhase >= 0) drawRipple(scan.phaseMs);
+    drawnRipplePhase = ripplePhase;
+    drawnRangeMeters = rangeMeters;
   }
-  if (fresh) drawRipple(nowMs);
 
   char text[64];
   unsigned count = 0;
   int nearest = -1;
   float nearestMm = 0;
   const float rangeMm = rangeMeters * 1000.0f;
-  if (fresh) {
-    drawTrails(nowMs, rangeMm);
+  if (scan.valid) {
     for (size_t i = 0; i < 3; ++i) {
-      const auto& target = radar.targets[i];
+      const auto& target = scan.targets[i];
       if (!target.present) continue;
       ++count;
       const float distance = hypotf(target.xMm, target.yMm);
@@ -249,17 +289,14 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
         nearest = static_cast<int>(i);
         nearestMm = distance;
       }
-      if (target.yMm < 0 || distance > rangeMm) {
+      if (!redrawRadar || target.yMm < 0 || distance > rangeMm) {
         continue;
       }
       const int x = kOriginX + lroundf(target.xMm * kRadius / rangeMm);
       const int y = kOriginY - lroundf(target.yMm * kRadius / rangeMm);
-      screen.fillSmoothCircle(x, y, 7, kGrid);
-      screen.fillSmoothCircle(x, y, 4, kBlue);
-      screen.fillSmoothCircle(x, y, 3, kGrid);
-      screen.fillSmoothCircle(x, y, 2, kBright);
+      drawTargetMarker(x, y);
       snprintf(text, sizeof(text), "%u", static_cast<unsigned>(i + 1));
-      drawText(text, x > 292 ? x - 15 : x + 9, y < 16 ? y + 8 : y - 10, kBright);
+      drawText(text, x > 289 ? x - 21 : x + 15, y < 16 ? y + 8 : y - 10, kBright);
     }
   }
   screen.clearClipRect();
@@ -325,7 +362,7 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
            1, kPanelBackground);
 
   // Right: nearest slot/count and its speed. N-- distinguishes a stale link from N0.
-  if (fresh) {
+  if (scan.valid) {
     if (nearest >= 0) snprintf(text, sizeof(text), "T%d N%u", nearest + 1, count);
     else snprintf(text, sizeof(text), "T-- N0");
   } else {
@@ -334,7 +371,7 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   drawText(text, 308, firstRowY, kPanelText, 1, kPanelBackground,
            lgfx::textdatum_t::top_right);
   if (nearest >= 0) {
-    snprintf(text, sizeof(text), "V %+dcm/s", static_cast<int>(radar.targets[nearest].speedCmS));
+    snprintf(text, sizeof(text), "V %+dcm/s", static_cast<int>(scan.targets[nearest].speedCmS));
   } else {
     snprintf(text, sizeof(text), "V --cm/s");
   }
@@ -457,9 +494,10 @@ void configureRegionFilter(const char* action) {
   if (backupOpen) backup.end();
   Serial.println(ok ? "FILTER OK (readback verified; normal detection resumed)"
                     : "FILTER FAILED: state may be unchanged or partially applied; run filter status");
-  // Wait for fresh reports after the configuration pause; remove stale trails.
+  // Drop displayed targets after a configuration pause.
   radar = ld2450::Parser{};
-  for (auto& trail : trails) trail.count = 0;
+  scan = ScanSnapshot{};
+  drawnRangeMeters = 0;
 }
 
 void configureBluetooth(bool enabled) {
@@ -502,7 +540,8 @@ void configureBluetooth(bool enabled) {
     }
   }
   radar = ld2450::Parser{};
-  for (auto& trail : trails) trail.count = 0;
+  scan = ScanSnapshot{};
+  drawnRangeMeters = 0;
 }
 
 void pollConsole() {
@@ -562,6 +601,7 @@ void setup() {
   screenReady = screenReady && displayedFrame.createSprite(320, 240) != nullptr;
   screen.setTextWrap(false);
   if (screenReady) {
+    initializeMarker();
     screen.fillScreen(kBackground);
     screen.setClipRect(0, 0, 320, kOriginY + 1);
     drawFixedGrid();
@@ -604,15 +644,10 @@ void loop() {
     const int byte = radarSerial.read();
     if (byte < 0) break;
     const uint32_t receivedMs = millis();
-    if (radar.push(static_cast<uint8_t>(byte), receivedMs)) {
-      for (size_t slot = 0; slot < 3; ++slot) trails[slot].update(radar.targets[slot], receivedMs);
-    }
+    radar.push(static_cast<uint8_t>(byte), receivedMs);
   }
 
   const uint32_t nowMs = millis();
-  if (!radar.fresh(nowMs)) {
-    for (auto& trail : trails) trail.count = 0;
-  }
   if (static_cast<uint32_t>(nowMs - lastDrawMs) >= kRadarFrameMs) {
     lastDrawMs = nowMs;
     const bool updatePanel = static_cast<uint32_t>(nowMs - lastPanelMs) >= kPanelFrameMs;
