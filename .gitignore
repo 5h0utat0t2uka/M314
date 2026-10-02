@@ -2,3 +2,6 @@
 .pre-commit-config.yaml
 .env
 .DS_Store
+build/
+.zed/settings.json
+__pycache__/

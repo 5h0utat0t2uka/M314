@@ -1,4 +1,4 @@
-#include "../firmware/cores3_check/target_trail.h"
+#include "../firmware/cores3/target_trail.h"
 
 #include <cassert>
 #include <cstdio>

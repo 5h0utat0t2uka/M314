@@ -6,6 +6,18 @@ default:
 boards:
   arduino-cli board list
 
+# Zed/clangd の解析設定を実際の Arduino ビルド情報から生成
+editor:
+  arduino-cli compile --profile cores3 --only-compilation-database \
+    --build-path build/editor-arduino \
+    --build-property "tools.ctags.path=$ARDUINO_CTAGS_PATH" \
+    firmware/cores3
+  python3 scripts/configure_editor.py
+
+# エディタと同じ clangd の LSP 診断でスケッチとホストテストを検証
+editor-check: editor
+  python3 scripts/check_editor.py
+
 # Mac 上で通信パーサー・相対回転・画面差分を検証（実機不要）
 test:
   #!/usr/bin/env bash
@@ -30,6 +42,12 @@ test:
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     tests/scan_snapshot_test.cpp -o "$test_dir/scan_snapshot_test"
   "$test_dir/scan_snapshot_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/wifi_settings_test.cpp -o "$test_dir/wifi_settings_test"
+  "$test_dir/wifi_settings_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/release_info_test.cpp -o "$test_dir/release_info_test"
+  "$test_dir/release_info_test"
 
 # USB コンソールから LD2450 の領域設定・解除・確認（Ctrl+C で終了）
 monitor port:
@@ -39,17 +57,28 @@ monitor port:
 build:
   arduino-cli compile --profile cores3 \
     --build-property "tools.ctags.path=$ARDUINO_CTAGS_PATH" \
-    firmware/cores3_check
+    firmware/cores3
+
+# 公開用のアプリと更新情報を build/release に生成（公開操作は行わない）
+release: test
+  #!/usr/bin/env bash
+  set -euo pipefail
+  release_dir="$(mktemp -d)"
+  trap 'rm -rf "$release_dir"' EXIT
+  arduino-cli compile --profile cores3 \
+    --build-property "tools.ctags.path=$ARDUINO_CTAGS_PATH" \
+    --output-dir "$release_dir" firmware/cores3
+  python3 scripts/package_release.py "$release_dir/cores3.ino.bin" build/release
 
 # ビルド後、全消去せずに書き込み
 upload port: build
   arduino-cli upload --profile cores3 \
     --port "$1" \
-    firmware/cores3_check
+    firmware/cores3
 
 # ビルド後、本体フラッシュ内の全データを消去して書き込み
 upload-erase port: build
   arduino-cli upload --profile cores3 \
-    --fqbn m5stack:esp32:m5stack_cores3:PSRAM=enabled,EraseFlash=all \
+    --fqbn m5stack:esp32:m5stack_cores3:PSRAM=enabled,PartitionScheme=app3M_fat9M_16MB,EraseFlash=all \
     --port "$1" \
-    firmware/cores3_check
+    firmware/cores3

@@ -2,7 +2,7 @@ default_profile: cores3
 
 profiles:
   cores3:
-    fqbn: m5stack:esp32:m5stack_cores3:PSRAM=enabled
+    fqbn: m5stack:esp32:m5stack_cores3:PSRAM=enabled,PartitionScheme=app3M_fat9M_16MB
     platforms:
       - platform: m5stack:esp32 (3.3.9)
         platform_index_url: https://static-cdn.m5stack.com/resource/arduino/package_m5stack_index.json

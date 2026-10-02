@@ -1,4 +1,4 @@
-#include "../firmware/cores3_check/ld2450.h"
+#include "../firmware/cores3/ld2450.h"
 
 #include <array>
 #include <cassert>

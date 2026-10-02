@@ -1,0 +1,14 @@
+If:
+  PathMatch: firmware/cores3/.*
+CompileFlags:
+  CompilationDatabase: build/clangd
+  BuiltinHeaders: QueryDriver
+  # GCC code-generation options have no equivalent in clangd's syntax analysis.
+  Add: [-mcpu=esp32s3]
+  Remove: [-mdisable-hardware-atomics, -fstrict-volatile-bitfields, -fno-tree-switch-conversion]
+---
+If:
+  PathMatch: tests/.*
+CompileFlags:
+  CompilationDatabase: build/clangd
+  BuiltinHeaders: QueryDriver

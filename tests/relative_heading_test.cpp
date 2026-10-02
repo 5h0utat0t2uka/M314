@@ -1,4 +1,4 @@
-#include "../firmware/cores3_check/relative_heading.h"
+#include "../firmware/cores3/relative_heading.h"
 
 #include <cassert>
 #include <cstdio>

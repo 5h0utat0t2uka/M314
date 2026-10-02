@@ -1,4 +1,4 @@
-#include "../firmware/cores3_check/scan_snapshot.h"
+#include "../firmware/cores3/scan_snapshot.h"
 #include <cassert>
 #include <cstdio>
 

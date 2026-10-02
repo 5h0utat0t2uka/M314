@@ -1,4 +1,4 @@
-#include "../firmware/cores3_check/display_diff.h"
+#include "../firmware/cores3/display_diff.h"
 
 #include <algorithm>
 #include <array>

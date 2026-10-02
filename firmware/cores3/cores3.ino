@@ -6,6 +6,7 @@
 #include "scan_snapshot.h"
 #include "region_filter.h"
 #include "display_diff.h"
+#include "startup_menu.h"
 
 constexpr int kRadarRx = 18;  // PORT.C R <- LD2450 TX
 constexpr int kRadarTx = 17;  // PORT.C T -> LD2450 RX
@@ -48,6 +49,8 @@ float cachedRotation = NAN;
 unsigned rangeMeters = 6;
 bool screenReady = false;
 bool displayInitialized = false;
+StartupMenu startupMenu;
+bool trackerStarted = false;
 
 void drawText(const char* text, int x, int y, uint16_t color, int size = 1,
               uint16_t background = kBackground,
@@ -617,11 +620,33 @@ void setup() {
 
   radarSerial.setRxBufferSize(1024);
   radarSerial.begin(kRadarBaud, SERIAL_8N1, kRadarRx, kRadarTx);
-  drawStatus(millis());
+  if (screenReady) startupMenu.begin();
+  if (!FirmwareUpdate::confirmBoot(screenReady)) {
+    screenReady = false;
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setCursor(16, 40);
+    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5.Display.println("Boot check failed");
+  }
 }
 
 void loop() {
   M5.update();
+  if (!screenReady) { delay(10); return; }
+  if (!trackerStarted) {
+    // Discard old reports while in the menu; Start waits for fresh sensor data.
+    for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) radarSerial.read();
+    if (startupMenu.poll()) {
+      trackerStarted = true;
+      heading.reset();
+      radar = ld2450::Parser{};
+      scan = ScanSnapshot{};
+      displayInitialized = false;
+      drawStatus(millis());
+    }
+    delay(1);
+    return;
+  }
   pollConsole();
   const auto touch = M5.Touch.getDetail();
   if (touch.wasClicked()) {
