@@ -1,14 +1,21 @@
 If:
   PathMatch: firmware/cores3/.*
 CompileFlags:
-  CompilationDatabase: build/clangd
+  CompilationDatabase: build/editor-arduino
   BuiltinHeaders: QueryDriver
   # GCC code-generation options have no equivalent in clangd's syntax analysis.
   Add: [-mcpu=esp32s3]
   Remove: [-mdisable-hardware-atomics, -fstrict-volatile-bitfields, -fno-tree-switch-conversion]
 ---
 If:
+  PathMatch: firmware/cores3/.*\.ino
+CompileFlags:
+  Add: [-x, c++, -include, Arduino.h]
+---
+If:
   PathMatch: tests/.*
 CompileFlags:
-  CompilationDatabase: build/clangd
+  CompilationDatabase: None
+  Compiler: clang++
   BuiltinHeaders: QueryDriver
+  Add: [-std=c++17, -Wall, -Wextra, -Werror, -fsanitize=undefined, -fno-sanitize-recover=all]

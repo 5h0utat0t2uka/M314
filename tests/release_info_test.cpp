@@ -21,9 +21,9 @@ int main() {
   assert(!digest(std::string(63, 'f'), bytes));
   assert(!digest(std::string(65, 'f'), bytes));
   assert(!digest(std::string(64, 'g'), bytes));
-  assert(downloadUrl("https://github.com/5h0utat0t2uka/hlk-ld2450/releases/download/v0.1.0/firmware.bin"));
+  assert(downloadUrl("https://github.com/5h0utat0t2uka/M314/releases/download/v0.1.0/firmware.bin"));
   assert(downloadUrl("https://release-assets.githubusercontent.com/github-production-release-asset/123?token=x"));
-  assert(!downloadUrl("http://github.com/5h0utat0t2uka/hlk-ld2450/releases/latest"));
+  assert(!downloadUrl("http://github.com/5h0utat0t2uka/M314/releases/latest"));
   assert(!downloadUrl("https://github.com/other/repo/releases/latest"));
   assert(!downloadUrl("https://release-assets.githubusercontent.com.attacker.test/file"));
   assert(!downloadUrl("https://release-assets.githubusercontent.com@attacker.test/file"));

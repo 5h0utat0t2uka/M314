@@ -12,17 +12,22 @@ editor:
     --build-path build/editor-arduino \
     --build-property "tools.ctags.path=$ARDUINO_CTAGS_PATH" \
     firmware/cores3
-  python3 scripts/configure_editor.py
 
-# エディタと同じ clangd の LSP 診断でスケッチとホストテストを検証
+# エディタと同じ clangd でスケッチとホストテストのエラー診断を検証
 editor-check: editor
-  python3 scripts/check_editor.py
+  #!/usr/bin/env bash
+  set -euo pipefail
+  for source in firmware/cores3/*.ino firmware/cores3/*.cpp tests/*.cpp; do
+    echo "Checking $source"
+    clangd --check="$source" --check-locations=false --log=error
+  done
 
 # Mac 上で通信パーサー・相対回転・画面差分を検証（実機不要）
 test:
   #!/usr/bin/env bash
   set -euo pipefail
-  test_dir="$(mktemp -d)"
+  mkdir -p .tmp
+  test_dir="$(mktemp -d "$PWD/.tmp/test.XXXXXX")"
   trap 'rm -rf "$test_dir"' EXIT
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     tests/ld2450_test.cpp -o "$test_dir/ld2450_test"
@@ -63,7 +68,8 @@ build:
 release: test
   #!/usr/bin/env bash
   set -euo pipefail
-  release_dir="$(mktemp -d)"
+  mkdir -p .tmp
+  release_dir="$(mktemp -d "$PWD/.tmp/release.XXXXXX")"
   trap 'rm -rf "$release_dir"' EXIT
   arduino-cli compile --profile cores3 \
     --build-property "tools.ctags.path=$ARDUINO_CTAGS_PATH" \

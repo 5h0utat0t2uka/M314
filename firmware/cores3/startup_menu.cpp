@@ -2,6 +2,7 @@
 #include "firmware_version.h"
 #include <M5Unified.h>
 #include <WiFi.h>
+#include <cstring>
 
 namespace {
 void text(const char* value, int x, int y, uint16_t color = TFT_WHITE) {
@@ -49,6 +50,19 @@ void StartupMenu::begin() {
 
 void StartupMenu::drawHome() {
   page_ = Page::Home;
+  if (touchTest_) {
+    title("Touch test");
+    text("Tap each +. USB: touch off", 16, 41);
+    const char* labels[] = {"Start", "Update", "Wi-Fi setup"};
+    for (int i = 0; i < 3; ++i) {
+      const int y = 70 + i * 50;
+      button("", y);
+      text(labels[i], 24, y + 12);
+      M5.Display.drawFastHLine(154, y + 21, 13, TFT_YELLOW);
+      M5.Display.drawFastVLine(160, y + 15, 13, TFT_YELLOW);
+    }
+    return;
+  }
   title("Motion Tracker");
   text((String("Version ") + kFirmwareVersion).c_str(), 16, 41);
   button("Start", 70);
@@ -75,7 +89,60 @@ void StartupMenu::showMessage(const char* message) {
   button("Back", 186);
 }
 
+bool StartupMenu::pollTouchConsole() {
+  bool changed = false;
+  for (int i = 0; i < 64 && Serial.available(); ++i) {
+    const int byte = Serial.read();
+    if (byte < 0) break;
+    if (byte == '\r' || byte == '\n') {
+      if (!touchCommandOverflow_ && touchCommandLength_) {
+        touchCommand_[touchCommandLength_] = '\0';
+        if (strcmp(touchCommand_, "touch test") == 0 || strcmp(touchCommand_, "touch off") == 0) {
+          touchTest_ = strcmp(touchCommand_, "touch test") == 0;
+          waitForRelease_ = true;
+          drawHome();
+          changed = true;
+          Serial.printf("TOUCH TEST %s: screen=%ldx%ld rotation=%u\n", touchTest_ ? "ON" : "OFF",
+                        static_cast<long>(M5.Display.width()), static_cast<long>(M5.Display.height()),
+                        static_cast<unsigned>(M5.Display.getRotation()));
+          if (touchTest_) Serial.println("Tap + at (160,91), (160,141), (160,191). Buttons are inactive.");
+        } else {
+          Serial.println("Menu commands: touch test | touch off");
+        }
+      }
+      touchCommandLength_ = 0;
+      touchCommandOverflow_ = false;
+    } else if (touchCommandLength_ < sizeof(touchCommand_) - 1) {
+      touchCommand_[touchCommandLength_++] = static_cast<char>(byte);
+    } else {
+      touchCommandOverflow_ = true;
+    }
+  }
+  return changed;
+}
+
 bool StartupMenu::poll() {
+  if (page_ == Page::Home && pollTouchConsole()) return false;
+  if (waitForRelease_) {
+    if (M5.Touch.getCount() == 0) waitForRelease_ = false;
+    return false;
+  }
+  if (touchTest_) {
+    const auto touch = M5.Touch.getDetail();
+    if (touch.wasPressed()) {
+      const auto raw = M5.Touch.getTouchPointRaw();
+      Serial.printf("TOUCH BEGIN raw=(%d,%d) screen=(%d,%d) base=(%d,%d)\n",
+                    raw.x, raw.y, touch.x, touch.y, touch.base_x, touch.base_y);
+    }
+    if (touch.wasReleased()) {
+      Serial.printf("TOUCH END base=(%d,%d) final=(%d,%d) clicked=%u state=%u\n",
+                    touch.base_x, touch.base_y, touch.x, touch.y,
+                    static_cast<unsigned>(touch.wasClicked()), static_cast<unsigned>(touch.state));
+      drawHome();
+      M5.Display.drawCircle(touch.base_x, touch.base_y, 5, TFT_MAGENTA);
+    }
+    return false;
+  }
   if (page_ == Page::Wifi) {
     wifi_.poll();
     if (wifi_.state() == WifiSetup::State::Closed) { drawHome(); return false; }

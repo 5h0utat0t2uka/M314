@@ -27,7 +27,7 @@ bool FirmwareUpdate::confirmBoot(bool healthy) {
 }
 
 namespace {
-constexpr char kReleaseBase[] = "https://github.com/5h0utat0t2uka/hlk-ld2450/releases/";
+constexpr char kReleaseBase[] = "https://github.com/5h0utat0t2uka/M314/releases/";
 
 // RAII closes TLS and frees buffers on every error path.
 class Download {

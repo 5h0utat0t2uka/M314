@@ -37,30 +37,32 @@ just upload-erase /dev/cu.usbmodem1101
 ```
 
 ## Zed の C++ 解析設定
-
 プロジェクトルートで Nix 環境に入り、次を実行する。flake の変更後に direnv が承認を求めた場合は、先に `direnv allow` を実行する。
-
 ```sh
 just editor
 ```
 
-生成後はZedでこのプロジェクトを開き直すか、コマンドパレットの `editor: restart language server` を実行する。
-新しくcloneしたとき、ソースファイルを追加したとき、ボード設定・ライブラリ・Nix環境を変更したときも `just editor` を再実行する。通常のコード編集では再生成は不要。
+生成後はNix環境が有効なターミナルから `zed .` で開く。既に開いている場合は環境を読み直してプロジェクトを開き直す。解析データベースのみを更新した場合は `editor: restart language server` でもよい。ZedのLSPログでは `/usr/bin/env` に `direnv exec . clangd` が渡されていることを確認する。これにより、macOSのログインシェルがPATHの順序を変えても、言語サーバー起動時にプロジェクトのNix環境を適用する。  
 
-- Arduino CLIの `--only-compilation-database` から、実際のincludeパス・マクロ・コンパイルオプションを取得する。Arduinoがコピーしたソースのパスは、編集する元ファイルに対応付ける。
-- ESP32-S3のXtensaを解析するため、Espressif公式clangdをNixでバージョンとSHA-256を固定して取得する。Mac用テストにはホストコンパイラの設定を使う。
-- コンパイラへの問い合わせで標準ヘッダーとターゲットを取得する。`--query-driver` は使用するコンパイラの絶対パスだけを許可する。
+新しくcloneしたとき、ソースファイルを追加したとき、ボード設定・ライブラリ・Nix環境を変更したときも `just editor` を再実行する。補完・診断は通常のコード編集に追従する。未開封ファイルの定義ジャンプ・検索は生成時のコピーを参照するため、必要に応じて再生成する。  
+
+- Arduino CLIの `--only-compilation-database` から、実際のincludeパス・マクロ・コンパイルオプションを取得する。生成された `build/editor-arduino/compile_commands.json` を `.clangd` から直接参照する。独自スクリプトによるパス変換は行わない。元ファイルの解析には、clangdが同名のビルド用コピーから推定したコンパイル設定を使う。
+- ESP32-S3のXtensaを解析するため、Espressif公式clangdをNixでバージョンとSHA-256を固定して取得する。Mac用テストは `.clangd` でArduinoのデータベースを参照しない設定にし、Nix環境の `clang++` と `just test` と同じ解析フラグを使う。
+- Nixが提供する `clangd` ラッパーを、Zedと `just editor-check` の両方で使う。Zedからは固定の `/usr/bin/env direnv exec . clangd` を経由して起動するため、Zed自身のPATHによるclangdの自動選択に依存しない。標準ヘッダーとターゲットの問い合わせは、Arduinoデータディレクトリ内の `internal/**/bin/xtensa-esp32s3-elf-g++` と、Nixで固定したホストの `clang++` に限定する。Arduino側は実在する単一パスではなく、条件に合う各バージョンのコンパイラを許可する。
+- Arduinoデータディレクトリの既定値はmacOSの `$HOME/Library/Arduino15`。変更する場合は `ARDUINO_DIRECTORIES_DATA` をNix/direnv環境に設定し、Arduino CLIとラッパーの両方へ渡す。CLIの設定ファイルだけを変更するとラッパーには反映されない。
 - GCC専用のコード生成オプション3つは `.clangd` で解析時だけ除外する。ファームウェアのビルド設定は変えない。
-- `build/editor-arduino/`、`build/clangd/`、`.zed/settings.json` は端末固有の生成物で、Git管理対象外。既存のZed設定は保持し、clangdの起動設定を更新する。ただしコメント付きJSON（JSONC）がある場合は上書きせずエラーにする。
-- `just editor-check` は同じclangdへLSPで全ソースを送り、エラー診断がないことを確認する。ログは `build/clangd/lsp-check.log`。ファームウェアのコンパイル確認には別途 `just build` を使う。
+- 解析用の生成物は `build/editor-arduino/`。Zed設定ファイルは生成しない。Git管理する `.zed/settings.json` には、`.ino` をC++として解析するための言語対応付けと、direnv経由の固定起動設定を置く。Nixストアのパスやユーザー名を含む設定の生成は不要。旧設定がある環境では、生成済みのNixストアを指す `lsp.clangd.binary.path` と `--query-driver` 引数を、この固定起動設定に置き換える。
+- `just editor-check` は `clangd --check --check-locations=false` でスケッチとホストテストのエラー診断を確認する。エラーはターミナルに表示し、検出した時点で失敗する。リファクタリングの自己テストは実行しない。Zedでの起動状態の確認や、`just build` によるファームウェアのコンパイル確認は別途行う。
 - `.ino` の解析では `Arduino.h` を読み込むが、Arduinoの自動関数プロトタイプ生成は再現しない。宣言順序はC++として有効に保つ。
+- 定義ジャンプやシンボル検索は、未開封のファイルについてビルド用コピーを返すことがある。コピーを編集しても元ソースには反映されず、再生成で上書きされる。修正するときは `firmware/cores3/` の元ファイルを開く。元ファイルを開くと、その情報が索引で優先される。
+- テスト・リリース作成の一時作業ディレクトリは、Git管理対象外の `.tmp/` に作成し、終了時に削除する。
 
-参考：[ZedのC++設定](https://zed.dev/docs/languages/cpp)、[clangdのcompile commands](https://clangd.llvm.org/design/compile-commands)、[システムヘッダーの解決](https://clangd.llvm.org/guides/system-headers)、[Espressif clangdの固定リリース](https://github.com/espressif/llvm-project/releases/tag/esp-21.1.3_20260408)。
+参考：[ZedのC++設定](https://zed.dev/docs/languages/cpp)、[clangdのcompile commands](https://clangd.llvm.org/design/compile-commands)、[clangdの索引と開いたファイルの優先順位](https://clangd.llvm.org/design/indexing)、[システムヘッダーの解決](https://clangd.llvm.org/guides/system-headers)、[Espressif clangdの固定リリース](https://github.com/espressif/llvm-project/releases/tag/esp-21.1.3_20260408)。
 
 ## 操作と表示
-- 起動メニューの `Start` でレーダーを開始。メニューへ戻るには本体を再起動する。
+- 起動メニューの `Start` でトラッカーを開始。メニューへ戻るには本体を再起動する。
 - CoreS3のスクリーンをタップで表示距離が **6m, 2m, 4m** と切り替え。
-- スクリーン下部中央に最も近い対象の距離を大きく表示。
+- スクリーン下部中央に最も近い対象の距離を表示。
 - スクリーン下部の左に表示範囲・相対角度、右に対象番号と検出数・速度をそれぞれ2行で表示。
 - 検出点・距離・対象番号・検出数・速度は、波紋の開始時に0.8秒周期でまとめて更新する（アニメーション300ms＋休止500ms）。
 - UART受信とジャイロ取得は継続し、目盛りの回転と `REL` はこの周期を待たず更新する。
@@ -70,7 +72,7 @@ just editor
 
 | 表示 | 意味 |
 | --- | --- |
-| `RNG` | レーダー表示の距離範囲（m） |
+| `RNG` | トラッカー表示の距離範囲（m） |
 | `REL` | ジャイロの基準方向からの相対角度（度） |
 | `STILL 2s` | ジャイロの静止補正中（赤文字）。本体を約2秒間静止させる |
 | `T1`〜`T3` | 最も近い対象のスロット番号 |
@@ -80,16 +82,13 @@ just editor
 | `V` | 最も近い対象の速度（cm/s）。対象がない場合は `V --cm/s` |
 
 ## Wi-Fi設定とソフトウェア更新
-
 最初の1回は `just upload /dev/cu.usbmodem1101` でUSBから書き込む。全消去は不要。
-起動メニュー・Wi-Fi設定ページ・更新メッセージは英語で表示する。
 
 ### Wi-Fiの初回設定
-
 1. 起動メニューで `Wi-Fi setup` をタップする。
-2. スマートフォンまたはMacを、画面の `Tracker-xxxxxx` に接続する。パスワードもCoreS3の画面に表示される。
+2. スマートフォンまたはMacを、画面の SSID `Tracker-xxxxxx` に接続してCoreS3の画面に表示されたパスワードで接続する。
 3. ブラウザで **http://192.168.4.1** を開く（HTTPSではない）。「インターネット接続なし」と表示されても、このWi-Fiへの接続を維持する。
-4. `Network name` で自宅などの **2.4GHz** ネットワークを選択、または名前を入力し、`Password` を入力して `Connect & save` を押す。
+4. 自宅などの **2.4GHz** ネットワークを選択、または名前を入力し、`Password` を入力して `Connect & save` を押す。
 5. CoreS3に `Wi-Fi saved` と表示されたら完了。約8秒後に設定用Wi-Fiが終了し、起動メニューへ戻る。
 
 - 接続確認は約20秒でタイムアウトする。失敗時は `Try again` から再入力でき、以前保存した設定は上書きしない。
@@ -97,18 +96,17 @@ just editor
 - USBモニターにも失敗理由と接続状態だけを出力する。SSID・パスワードは出力しない。原因確認時は表示されたメッセージと番号を使用する。
 - 接続時に設定用Wi-Fiのチャンネルが変わり、ブラウザが切断される場合は同じ `Tracker-xxxxxx` に再接続する。CoreS3側の成功表示でも確認できる。
 - 設定用Wi-Fiは毎回新しいパスワードを生成し、最大1台が接続できる。`Back`、保存成功、または開始から5分で停止する。
-- 通常のレーダー動作中はWi-Fiを停止する。起動時の自動接続・自動更新は行わない。
+- 通常のトラッカー動作中はWi-Fiを停止する。起動時の自動接続・自動更新は行わない。
 - SSIDとパスワードはCoreS3のNVSにまとめて保存する。公開ファームウェア、GitHub、ログには含めない。NVSの暗号化は本実装では有効化していない。
 - ネットワークを変えるときは再び `Wi-Fi setup` を開く。通常のUSB書き込みとOTA更新では保存情報を保持するが、`upload-erase` は消去する。
 
 ### 更新
-
 1. `Update` を押すと、保存済みのWi-Fiに接続し、GitHub Releasesの最新リリースを確認する。
 2. 新しいバージョンがあれば現在と新しいバージョンを表示する。`Install` で更新、`Back` でキャンセルする。
 3. 完了後、自動で再起動する。更新中は電源を接続したままにする。
 
-更新はレーダーを開始する前のメニュー内だけで行う。Wi-Fi接続・時刻同期・HTTPS通信中は操作を待つ。
-`Up to date` は更新不要、`No release available` は公開リリースまたは `manifest.json` が見つからないことを示す。
+更新はトラッカーを開始する前のメニュー内だけで行う。Wi-Fi接続・時刻同期・HTTPS通信中は操作を待つ。  
+`Up to date` は更新不要、`No release available` は公開リリースまたは `manifest.json` が見つからないことを示す。  
 インターネットへのHTTPS接続とNTPの時刻同期が必要。認証ページが必要な公衆Wi-Fi・企業向け802.1X認証は対象外。
 
 - ESP32のCA証明書バンドルでHTTPSを検証する。証明書検証を省略する処理はない。
@@ -118,7 +116,6 @@ just editor
 - 公開ファイルの信頼性はHTTPSとGitHubリポジトリの管理権限に依存する。独立した署名鍵によるファームウェア署名は実装していない。
 
 ### リリースファイルを公開する
-
 1. `firmware/cores3/firmware_version.h` の `kFirmwareVersion` を増やす（例：`0.1.0` → `0.1.1`）。
 2. `just release` を実行する。テストとコンパイル後、`build/release/firmware.bin` と `build/release/manifest.json` が生成される。
 3. 実機でUSB書き込みして確認し、変更をコミットする。
@@ -130,13 +127,10 @@ just editor
 ボード設定は現在の構成と同じ `app3M_fat9M_16MB`（アプリ3MiB×2）に固定している。
 
 ### 実機で確認する項目
-
 - Wi-Fiの正しいパスワード／誤ったパスワード、`Back`、5分経過による設定モード終了。
 - 再起動後の接続情報保持、`Start` 後の既存レーダー操作。
 - 最新版・更新なし・リリースなし・ネットワーク切断時の表示。
 - バージョンを上げた実際のリリースからのOTA、更新後のバージョンとWi-Fi設定・LD2450設定の保持。
-
-参考：[Arduino-ESP32 Wi-Fi API](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/wifi.html)、[Preferences](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/preferences.html)、[ESP32-S3 OTA](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/system/ota.html)。
 
 ## LD2450
 通常のファームウェアを書き込んだ後、近距離領域フィルターをUSBコンソールからCoreS3経由でUART設定する。  
@@ -155,7 +149,7 @@ just monitor /dev/cu.usbmodem1101
 
 `FILTER OK (readback verified; normal detection resumed)` が表示されれば成功で、失敗時は`filter status` で確認する。
 
-### 描画負荷の削減
+### 描画負荷の軽減
 - 固定の内外の半円は起動時にアンチエイリアス付きで描画して保存し、回転時も再利用する。
 - 完成した画像を前回表示した画像と16×8px単位で比較し、変化した領域だけLCDに転送する。隣接タイルと同じ差分配置の連続行はまとめて転送する。
 - 点のぼかしは起動時に27×27pxのアルファマスクを計算し、描画時は背景に合成する。画面全体へのぼかし処理は行わない。

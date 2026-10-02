@@ -13,6 +13,12 @@ class StartupMenu {
   WifiSetup wifi_;
   FirmwareUpdate update_;
   WifiSetup::State drawnWifiState_ = WifiSetup::State::Closed;
+  bool touchTest_ = false;
+  bool waitForRelease_ = false;
+  char touchCommand_[16] = {};
+  size_t touchCommandLength_ = 0;
+  bool touchCommandOverflow_ = false;
+  bool pollTouchConsole();
   void drawHome();
   void drawWifi();
   void showMessage(const char* text);

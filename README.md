@@ -1,8 +1,8 @@
 # M314 Motion Tracker 
-![Motion Tracker](./docs/Motion_Tracker_detects_one_signal.webp)  
+![Motion Tracker](./docs/Motion_Tracker.webp)  
 ![Motion Tracker](./docs/ss.png)  
 
-This project uses [HLK-LD2450](https://www.hlktech.net/index.php?id=1182) and [M5Stack CoreS3](https://docs.m5stack.com/en/core/CoreS3) to build the M314 Motion Tracker — that USCM equipment featured in the movie *Aliens*.  
+This project uses [HLK-LD2450](https://www.hlktech.net/index.php?id=1182) and [M5Stack CoreS3](https://docs.m5stack.com/en/core/CoreS3) to build the M314 Motion Tracker display and sensing — that USCM equipment featured in the movie *Aliens*.  
 
 You can experience the vibe of the film — "anytime, anywhere"!
 

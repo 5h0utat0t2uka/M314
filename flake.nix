@@ -25,6 +25,12 @@
       '';
       dontFixup = true;
     };
+    # Zed and editor-check use the same clangd through the project PATH.
+    clangd = pkgs.writeShellScriptBin "clangd" ''
+      exec ${espClangd}/bin/clangd \
+        --query-driver="''${ARDUINO_DIRECTORIES_DATA:-$HOME/Library/Arduino15}/internal/**/bin/xtensa-esp32s3-elf-g++,${pkgs.clang}/bin/clang++" \
+        "$@"
+    '';
     # Arduino only distributes an Intel macOS binary for this tool.
     # Build the same Arduino-specific release natively on Apple Silicon.
     arduinoCtags = pkgs.stdenv.mkDerivation {
@@ -44,13 +50,13 @@
   {
     devShells.${system}.default = pkgs.mkShellNoCC {
       packages = [
+        clangd
         pkgs.arduino-cli
         pkgs.just
         pkgs.clang
         pkgs.python3
       ];
       ARDUINO_CTAGS_PATH = "${arduinoCtags}/bin";
-      ESP_CLANGD = "${espClangd}/bin/clangd";
     };
   };
 }

@@ -39,7 +39,7 @@ inline bool digest(std::string_view text, std::array<uint8_t, 32>& bytes) {
 
 inline bool downloadUrl(std::string_view url) {
   // GitHub's public release redirect is the only off-repository destination allowed.
-  constexpr std::string_view repository = "https://github.com/5h0utat0t2uka/hlk-ld2450/releases/";
+  constexpr std::string_view repository = "https://github.com/5h0utat0t2uka/M314/releases/";
   constexpr std::string_view assets = "https://release-assets.githubusercontent.com/";
   return url.substr(0, repository.size()) == repository || url.substr(0, assets.size()) == assets;
 }
