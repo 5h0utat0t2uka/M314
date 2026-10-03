@@ -28,6 +28,7 @@ bool FirmwareUpdate::confirmBoot(bool healthy) {
 
 namespace {
 constexpr char kReleaseBase[] = "https://github.com/5h0utat0t2uka/M314/releases/";
+constexpr size_t kMaxDownloadUrlLength = 8192;
 
 // RAII closes TLS and frees buffers on every error path.
 class Download {
@@ -37,27 +38,58 @@ class Download {
   int64_t size = -1;
   bool open(String url) {
     for (unsigned redirect = 0; redirect < 4; ++redirect) {
-      if (!release_info::downloadUrl(url.c_str())) return false;
+      status = 0;
+      size = -1;
+      if (!release_info::downloadUrl(url.c_str())) {
+        Serial.println("Update: download URL rejected");
+        return false;
+      }
+      if (url.length() > kMaxDownloadUrlLength) {
+        Serial.println("Update: download URL too long");
+        return false;
+      }
       if (client_) { esp_http_client_cleanup(client_); client_ = nullptr; }
       location_ = "";
       esp_http_client_config_t config{};
       config.url = url.c_str();
+      // ESP-IDF must fit the entire request line in the TX buffer. GitHub's
+      // signed redirect URLs exceed the 512-byte default. Keep room for the
+      // method/protocol and headers; the URL limit bounds this allocation.
+      const size_t txSize = url.length() + 128;
+      config.buffer_size_tx = static_cast<int>(txSize < 512 ? 512 : txSize);
       config.crt_bundle_attach = esp_crt_bundle_attach;
       config.timeout_ms = 12000;
       config.disable_auto_redirect = true;
       config.user_agent = "CoreS3-Motion-Tracker";
       config.event_handler = onEvent;
       config.user_data = this;
+      // Log sizes and error codes only, never signed URLs or credentials.
+      Serial.printf("Update: request %u, URL bytes=%u, TX bytes=%d\n",
+                    redirect + 1, static_cast<unsigned>(url.length()), config.buffer_size_tx);
       client_ = esp_http_client_init(&config);
-      if (!client_ || esp_http_client_open(client_, 0) != ESP_OK) return false;
+      if (!client_) {
+        Serial.println("Update: HTTP client initialization failed");
+        return false;
+      }
+      const esp_err_t error = esp_http_client_open(client_, 0);
+      if (error != ESP_OK) {
+        Serial.printf("Update: HTTP open failed: %s (%d)\n", esp_err_to_name(error), error);
+        return false;
+      }
       size = esp_http_client_fetch_headers(client_);
-      if (size < 0) return false;
+      if (size < 0) {
+        Serial.printf("Update: response headers failed, errno=%d\n",
+                      esp_http_client_get_errno(client_));
+        return false;
+      }
       status = esp_http_client_get_status_code(client_);
+      Serial.printf("Update: HTTP status=%d\n", status);
       if (status == 200) return true;
       if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) return false;
       if (location_.startsWith("/")) location_ = "https://github.com" + location_;
       url = location_;
     }
+    Serial.println("Update: too many redirects");
     return false;
   }
   int read(char* buffer, int capacity) { return esp_http_client_read(client_, buffer, capacity); }

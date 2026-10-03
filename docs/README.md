@@ -116,6 +116,9 @@ just editor
 
 更新はトラッカーを開始する前のメニュー内だけで行う。Wi-Fi接続・時刻同期・HTTPS通信中は操作を待つ。  
 `Up to date` は更新不要、`No release available` は公開リリースまたは `manifest.json` が見つからないことを示す。  
+
+`Update check failed` / `Download failed` の場合は、`just monitor /dev/cu.usbmodem1101` でUSBモニターを開いてから再実行する。`Update:` のログにリクエスト番号・URL長・送信バッファ容量・HTTPステータス、失敗時には処理段階と利用可能なエラーコードを出力する。署名付きURLやWi-Fiの認証情報は出力しない。
+
 インターネットへのHTTPS接続とNTPの時刻同期が必要。認証ページが必要な公衆Wi-Fi・企業向け802.1X認証は対象外。
 
 - ESP32のCA証明書バンドルでHTTPSを検証する。証明書検証を省略する処理はない。
