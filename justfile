@@ -48,6 +48,9 @@ test:
     tests/scan_snapshot_test.cpp -o "$test_dir/scan_snapshot_test"
   "$test_dir/scan_snapshot_test"
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/sound_cues_test.cpp -o "$test_dir/sound_cues_test"
+  "$test_dir/sound_cues_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     tests/wifi_settings_test.cpp -o "$test_dir/wifi_settings_test"
   "$test_dir/wifi_settings_test"
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \

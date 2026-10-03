@@ -1,10 +1,13 @@
 #include "startup_menu.h"
 #include "firmware_version.h"
+#include "boot_logo.h"
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <cstring>
 
 namespace {
+constexpr uint32_t kSplashDurationMs = 1800;
+
 void text(const char* value, int x, int y, uint16_t color = TFT_WHITE) {
   M5.Display.setFont(&fonts::Font2);
   M5.Display.setTextSize(1);
@@ -45,7 +48,27 @@ void updateProgress(const char* message, int percent) {
 void StartupMenu::begin() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_OFF);
-  drawHome();
+  page_ = Page::Splash;
+  M5.Display.clearClipRect();
+  M5.Display.fillScreen(TFT_BLACK);
+  constexpr int margin = 8;
+  const int width = M5.Display.width();
+  const int height = M5.Display.height();
+  const float scaleX = float(width - margin * 2) / boot_logo::kWidth;
+  const float scaleY = float(height - margin * 2) / boot_logo::kHeight;
+  const float scale = scaleX < scaleY ? scaleX : scaleY;
+  const int logoWidth = static_cast<int>(boot_logo::kWidth * scale);
+  const int logoHeight = static_cast<int>(boot_logo::kHeight * scale);
+  const bool drawn = M5.Display.drawPng(boot_logo::kPng, sizeof(boot_logo::kPng),
+      (width - logoWidth) / 2, (height - logoHeight) / 2,
+      0, 0, 0, 0, scale, scale);
+  M5.Display.releasePngMemory();
+  splashStartedMs_ = millis();  // Count the full second after drawing finishes.
+  if (!drawn) {
+    Serial.println("Boot logo: drawing failed");
+    waitForRelease_ = true;
+    drawHome();
+  }
 }
 
 void StartupMenu::drawHome() {
@@ -63,11 +86,21 @@ void StartupMenu::drawHome() {
     }
     return;
   }
-  title("Motion Tracker");
+  title("M314 Motion Tracker");
   text((String("Version ") + kFirmwareVersion).c_str(), 16, 41);
   button("Start", 70);
   button("Update", 120);
   button("Wi-Fi setup", 170);
+}
+
+void StartupMenu::drawSound() {
+  page_ = Page::Sound;
+  waitForRelease_ = true;
+  title("Sound");
+  text("Choose sound", 16, 41);
+  button("On", 70);
+  button("Off", 120);
+  button("Back", 170);
 }
 
 void StartupMenu::drawWifi() {
@@ -122,6 +155,14 @@ bool StartupMenu::pollTouchConsole() {
 }
 
 bool StartupMenu::poll() {
+  if (page_ == Page::Splash) {
+    if (static_cast<uint32_t>(millis() - splashStartedMs_) >= kSplashDurationMs) {
+      // A press that began on the logo must not activate a menu button.
+      waitForRelease_ = true;
+      drawHome();
+    }
+    return false;
+  }
   if (page_ == Page::Home && pollTouchConsole()) return false;
   if (waitForRelease_) {
     if (M5.Touch.getCount() == 0) waitForRelease_ = false;
@@ -153,8 +194,8 @@ bool StartupMenu::poll() {
   const int y = touch.base_y;
   if (page_ == Page::Home) {
     if (y >= 70 && y < 112) {
-      WiFi.mode(WIFI_OFF);
-      return true;
+      drawSound();
+      return false;
     }
     if (y >= 120 && y < 162) {
       if (!update_.check(updateProgress)) {
@@ -171,6 +212,27 @@ bool StartupMenu::poll() {
     } else if (y >= 170 && y < 212) {
       if (wifi_.begin()) { page_ = Page::Wifi; drawWifi(); }
       else { showMessage("Could not start Wi-Fi"); }
+    }
+  } else if (page_ == Page::Sound) {
+    if ((y >= 70 && y < 112) || (y >= 120 && y < 162)) {
+      const bool enableSound = y < 112;
+      if (enableSound) {
+        M5.Speaker.setVolume(80);
+        if (!M5.Speaker.begin()) {
+          M5.Speaker.end();
+          showMessage("Sound unavailable");
+          return false;
+        }
+      } else {
+        M5.Speaker.end();
+      }
+      soundEnabled_ = enableSound;
+      WiFi.mode(WIFI_OFF);
+      return true;
+    }
+    if (y >= 170 && y < 212) {
+      waitForRelease_ = true;
+      drawHome();
     }
   } else if (page_ == Page::Wifi && y >= 204 && y < 234) {
     wifi_.stop();

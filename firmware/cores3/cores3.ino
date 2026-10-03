@@ -7,6 +7,8 @@
 #include "region_filter.h"
 #include "display_diff.h"
 #include "startup_menu.h"
+#include "sound_cues.h"
+#include "tracker_sounds.h"
 
 constexpr int kRadarRx = 18;  // PORT.C R <- LD2450 TX
 constexpr int kRadarTx = 17;  // PORT.C T -> LD2450 RX
@@ -35,6 +37,8 @@ M5Canvas displayedFrame(&M5.Display);
 ld2450::Parser radar;
 RelativeHeading heading;
 ScanSnapshot scan;
+SoundCues soundCues;
+uint8_t nextDetectionChannel = 1;
 constexpr int kMarkerRadius = 10;
 constexpr int kMarkerBlur = 3;
 constexpr int kMarkerExtent = kMarkerRadius + kMarkerBlur;
@@ -248,12 +252,49 @@ void presentScreen(int rows) {
   displayInitialized = true;
 }
 
+void stopTrackerSound() {
+  soundCues.reset();
+  if (M5.Speaker.isPlaying()) M5.Speaker.stop();
+}
+
+void updateTrackerSound(uint32_t nowMs, bool snapshotChanged) {
+  const auto events = soundCues.update(nowMs, scan, snapshotChanged);
+  if (events.stopAll) {
+    if (M5.Speaker.isPlaying()) M5.Speaker.stop();
+    return;
+  }
+  if (events.stopDetection) {
+    for (int channel = 1; channel <= 2; ++channel) {
+      if (M5.Speaker.isPlaying(channel)) M5.Speaker.stop(channel);
+    }
+  }
+  // Only submit to idle channels: no waiting for queue space in the UI loop.
+  if (events.ripple && !M5.Speaker.isPlaying(0)) {
+    if (!M5.Speaker.playRaw(tracker_sounds::kRipple, tracker_sounds::kRippleSamples,
+                           tracker_sounds::kSampleRate, false, 1, 0)) {
+      Serial.println("Sound: ripple playback failed");
+    }
+  }
+  if (events.detection) {
+    // Alternate channels so the 1.2 s tail survives the next 800 ms sweep.
+    const int channel = nextDetectionChannel;
+    nextDetectionChannel = channel == 1 ? 2 : 1;
+    if (!M5.Speaker.isPlaying(channel) &&
+        !M5.Speaker.playRaw(tracker_sounds::kDetections[events.detection - 1],
+                           tracker_sounds::kDetectionSamples,
+                           tracker_sounds::kSampleRate, false, 1, channel)) {
+      Serial.println("Sound: detection playback failed");
+    }
+  }
+}
+
 void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   if (!screenReady) return;
   const bool fresh = radar.fresh(nowMs);
   const bool imuFresh = heading.fresh(nowMs);
   const float rotation = imuFresh && heading.ready ? heading.degrees : 0;
   const bool snapshotChanged = scan.update(nowMs, radar);
+  updateTrackerSound(nowMs, snapshotChanged);
   const bool gridChanged = !isfinite(cachedRotation) ||
       fabsf(RelativeHeading::wrap(rotation - cachedRotation)) >= 0.15f;
   const int ripplePhase = fresh && scan.phaseMs < ScanSnapshot::sweepMs
@@ -437,6 +478,7 @@ void printRegionFilter(const ld2450::RegionFilter& filter) {
 }
 
 void configureRegionFilter(const char* action) {
+  stopTrackerSound();
   Serial.printf("FILTER %s: starting\n", action);
   ld2450::AckParser ack;
   const uint8_t enable[] = {1, 0};
@@ -504,6 +546,7 @@ void configureRegionFilter(const char* action) {
 }
 
 void configureBluetooth(bool enabled) {
+  stopTrackerSound();
   Serial.printf("Bluetoothを%sに設定します。\n", enabled ? "有効" : "無効");
   ld2450::AckParser ack;
   const uint8_t enableConfig[] = {1, 0};
@@ -579,10 +622,11 @@ void pollConsole() {
 void setup() {
   auto config = M5.config();
   config.internal_mic = false;
-  config.internal_spk = false;
+  config.internal_spk = true;  // Configure pins; keep output off until Sound > On.
   config.internal_imu = true;
   config.output_power = true;  // Supply 5 V to the external ports.
   M5.begin(config);
+  M5.Speaker.end();
   Serial.begin(115200);
   // Keep library offsets fixed while our stationary bias estimate is in use.
   M5.Imu.setCalibration(0, 0, 0);
@@ -637,6 +681,8 @@ void loop() {
     // Discard old reports while in the menu; Start waits for fresh sensor data.
     for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) radarSerial.read();
     if (startupMenu.poll()) {
+      soundCues.setEnabled(startupMenu.soundEnabled());
+      nextDetectionChannel = 1;
       trackerStarted = true;
       heading.reset();
       radar = ld2450::Parser{};
