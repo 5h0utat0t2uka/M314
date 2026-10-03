@@ -9,9 +9,8 @@ class StartupMenu {
   bool poll();  // True after Start and a Sound choice.
   bool soundEnabled() const { return soundEnabled_; }
  private:
-  enum class Page { Splash, Home, Sound, Wifi, Release, Message };
+  enum class Page { Home, Sound, Wifi, Release, Message };
   Page page_ = Page::Home;
-  uint32_t splashStartedMs_ = 0;
   WifiSetup wifi_;
   FirmwareUpdate update_;
   WifiSetup::State drawnWifiState_ = WifiSetup::State::Closed;

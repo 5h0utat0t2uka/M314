@@ -55,6 +55,12 @@ bool screenReady = false;
 bool displayInitialized = false;
 StartupMenu startupMenu;
 bool trackerStarted = false;
+bool bootLogVisible = true;
+bool bootSensorReady = false;
+bool bootTouchReleased = false;
+uint32_t bootCompletedMs = 0;
+constexpr uint32_t kBootSensorTimeoutMs = 2000;
+constexpr uint32_t kBootLogHoldMs = 1000;
 
 void drawText(const char* text, int x, int y, uint16_t color, int size = 1,
               uint16_t background = kBackground,
@@ -619,6 +625,23 @@ void pollConsole() {
   }
 }
 
+// Draw directly to the LCD so allocation failures can also be reported.
+void bootText(const char* value, int y, uint16_t color = TFT_WHITE) {
+  M5.Display.setTextColor(color, TFT_BLACK);
+  M5.Display.drawString(value, 16, y);
+  Serial.println(value);
+}
+
+void bootStatus(const char* label, const char* status, int y,
+                uint16_t color = TFT_WHITE) {
+  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5.Display.drawString(label, 16, y);
+  M5.Display.fillRect(220, y, 100, 16, TFT_BLACK);
+  M5.Display.setTextColor(color, TFT_BLACK);
+  M5.Display.drawString(status, 220, y);
+  Serial.printf("%s  %s\n", label, status);
+}
+
 void setup() {
   auto config = M5.config();
   config.internal_mic = false;
@@ -634,6 +657,13 @@ void setup() {
 
   M5.Display.setRotation(1);
   M5.Display.setBrightness(128);
+  M5.Display.clearClipRect();
+  M5.Display.fillScreen(TFT_BLACK);
+  M5.Display.setFont(&fonts::Font2);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextDatum(lgfx::textdatum_t::top_left);
+  M5.Display.setTextWrap(false);
+  bootText("M314 Booting...", 16);
   screen.setColorDepth(16);
   screen.setPsram(true);
   screenReady = screen.createSprite(320, 240) != nullptr;
@@ -647,6 +677,8 @@ void setup() {
   displayedFrame.setPsram(true);
   screenReady = screenReady && displayedFrame.createSprite(320, 240) != nullptr;
   screen.setTextWrap(false);
+  bootStatus("Display buffers", screenReady ? "OK" : "FAIL", 60,
+             screenReady ? TFT_WHITE : TFT_RED);
   if (screenReady) {
     initializeMarker();
     screen.fillScreen(kBackground);
@@ -654,29 +686,66 @@ void setup() {
     drawFixedGrid();
     screen.pushSprite(&fixedGrid, 0, 0);
     screen.clearClipRect();
+    bootStatus("Radar graphics", "OK", 84);
   } else {
-    M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.setTextSize(2);
-    M5.Display.setCursor(8, 16);
-    M5.Display.println("Display buffer failed");
+    bootStatus("Radar graphics", "SKIP", 84, TFT_YELLOW);
   }
 
   radarSerial.setRxBufferSize(1024);
   radarSerial.begin(kRadarBaud, SERIAL_8N1, kRadarRx, kRadarTx);
-  if (screenReady) startupMenu.begin();
-  if (!FirmwareUpdate::confirmBoot(screenReady)) {
-    screenReady = false;
-    M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setCursor(16, 40);
-    M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Display.println("Boot check failed");
+  bootStatus("Sensor UART", "WAIT", 108);
+  ld2450::Parser bootRadar;
+  const uint32_t sensorStartedMs = millis();
+  while (!bootSensorReady &&
+         static_cast<uint32_t>(millis() - sensorStartedMs) < kBootSensorTimeoutMs) {
+    M5.update();
+    for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) {
+      const int byte = radarSerial.read();
+      if (byte < 0) break;
+      // A complete report with zero targets also confirms communication.
+      if (bootRadar.push(static_cast<uint8_t>(byte), millis())) {
+        bootSensorReady = true;
+        break;
+      }
+    }
+    delay(1);
   }
+  bootStatus("Sensor UART", bootSensorReady ? "OK" : "TIMEOUT", 108,
+             bootSensorReady ? TFT_WHITE : TFT_YELLOW);
+  // An unplugged sensor must not reject an otherwise healthy OTA firmware.
+  screenReady = FirmwareUpdate::confirmBoot(screenReady);
+  bootStatus("Boot check", screenReady ? "OK" : "FAIL", 132,
+             screenReady ? TFT_WHITE : TFT_RED);
+  if (!screenReady) {
+    bootText("Boot failed", 180, TFT_RED);
+    return;
+  }
+  if (bootSensorReady) {
+    bootText("Ready", 180);
+  } else {
+    bootText("Check sensor wiring", 180, TFT_YELLOW);
+    bootText("Tap to open menu", 208);
+  }
+  bootCompletedMs = millis();
 }
 
 void loop() {
   M5.update();
   if (!screenReady) { delay(10); return; }
+  if (bootLogVisible) {
+    // Keep the UART drained; tracking starts from fresh reports after Start.
+    for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) radarSerial.read();
+    if (M5.Touch.getCount() == 0) bootTouchReleased = true;
+    const bool openMenu = bootSensorReady
+        ? static_cast<uint32_t>(millis() - bootCompletedMs) >= kBootLogHoldMs
+        : bootTouchReleased && M5.Touch.getDetail().wasClicked();
+    if (openMenu) {
+      bootLogVisible = false;
+      startupMenu.begin();
+    }
+    delay(1);
+    return;
+  }
   if (!trackerStarted) {
     // Discard old reports while in the menu; Start waits for fresh sensor data.
     for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) radarSerial.read();

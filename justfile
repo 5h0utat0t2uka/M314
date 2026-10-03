@@ -22,7 +22,7 @@ editor-check: editor
     clangd --check="$source" --check-locations=false --log=error
   done
 
-# Mac 上で通信パーサー・相対回転・画面差分を検証（実機不要）
+# ホスト上で通信パーサー・相対回転・画面差分を検証（実機不要）
 test:
   #!/usr/bin/env bash
   set -euo pipefail

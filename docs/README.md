@@ -7,10 +7,24 @@
 | TX | R（RX / GPIO18） |
 | GND | G（GND） |
 
-Arduino が配布する macOS 用 `ctags` は Intel 用で Apple Silicon ではそのまま実行できないため、このプロジェクトでは Arduino 公式の同じ `5.8-arduino11` ソースを Nix で ARM 向けにビルドし、`$ARDUINO_CTAGS_PATH` にパスを設定して `--build-property` で指定。  
+開発環境は Apple Silicon の macOS（`aarch64-darwin`）と、64bit Linux（`x86_64-linux` / `aarch64-linux`）向けに定義している。Nix（flakes 有効）をインストールし、`nix develop` または direnv の `direnv allow` で入る。Intel Mac・32bit Linux は対象外。  
+Arduino 公式の `ctags` `5.8-arduino11` を各ホスト向けにNixでビルドし、`$ARDUINO_CTAGS_PATH` を `--build-property` で指定する。Apple SiliconではIntel用配布バイナリを使わずに済む。
+
+Linuxでは、NixpkgsのArduino CLIに付属するFHS互換環境を利用する。Espressif版clangdにも同じ仕組みを使い、Arduinoが取得したコンパイラを `--query-driver` から実行できるようにする。NixOSでもシステム全体の `nix-ld` 設定は不要。実行にはBubblewrapのユーザー名前空間が利用できる環境が必要（制限されたコンテナなどは対象外）。
 
 `firmware/cores3/sketch.yaml` のプロファイルで、ボード用コアとM5Unified・M5GFX のバージョンを固定。  
 CoreS3 の Quad PSRAM は `PSRAM=enabled` を明示。
+
+## 開発環境のOS別検証
+3構成のNix定義評価、Linux版clangdのSHA-256と共有ライブラリ依存を確認済み。Apple SiliconのmacOSではビルド・テスト9種類・エディタ解析が成功。Linux上の実行・USB書き込みは未検証。各OSで以下を確認する。
+```sh
+nix develop -c just test
+nix develop -c just build
+nix develop -c just editor-check
+nix develop -c just boards
+```
+
+参考：[EspressifのOS別配布物](https://github.com/espressif/llvm-project/releases/tag/esp-21.1.3_20260408)、[Arduino CLIのOS別保存先](https://docs.arduino.cc/arduino-cli/configuration/#default-directories)、[固定済みNixpkgsのArduino CLI Linux実行環境](https://github.com/NixOS/nixpkgs/blob/0a3468a402c449992505b6a9fc5b06580141b750/pkgs/by-name/ar/arduino-cli/package.nix)。
 
 ## `justfile`
 ```sh
@@ -25,7 +39,7 @@ just upload /dev/cu.usbmodem1101      # ビルドと通常の書き込み
 just monitor /dev/cu.usbmodem1101     # USB コンソールから LD2450 の領域設定確認
 ```
 
-- 書き込み先のポートは `just boards` で確認し、引数に指定。
+- 書き込み先のポートは `just boards` で確認し、引数に指定。Linuxでは通常 `/dev/ttyACM0` などになるため、例の `/dev/cu.usbmodem1101` を実際のポートに置き換える。USBへのアクセス権限はホスト側で設定する（多くのLinuxでは `dialout` グループ、ディストリビューションにより異なる）。開発コマンドを `sudo` で実行しない。
 - どちらの書き込みコマンドも先にビルドを行い、成功した場合だけ書き込み。
 - 通常の開発では `just upload` を使う。
 
@@ -45,9 +59,9 @@ just editor
 新しくcloneしたとき、ソースファイルを追加したとき、ボード設定・ライブラリ・Nix環境を変更したときも `just editor` を再実行する。補完・診断は通常のコード編集に追従する。未開封ファイルの定義ジャンプ・検索は生成時のコピーを参照するため、必要に応じて再生成する。  
 
 - Arduino CLIの `--only-compilation-database` から、実際のincludeパス・マクロ・コンパイルオプションを取得する。生成された `build/editor-arduino/compile_commands.json` を `.clangd` から直接参照する。独自スクリプトによるパス変換は行わない。元ファイルの解析には、clangdが同名のビルド用コピーから推定したコンパイル設定を使う。
-- ESP32-S3のXtensaを解析するため、Espressif公式clangdをNixでバージョンとSHA-256を固定して取得する。Mac用テストは `.clangd` でArduinoのデータベースを参照しない設定にし、Nix環境の `clang++` と `just test` と同じ解析フラグを使う。
+- ESP32-S3のXtensaを解析するため、Espressif公式clangdをNixでバージョンとSHA-256を固定して取得する。ホスト上のテストは `.clangd` でArduinoのデータベースを参照しない設定にし、Nix環境の `clang++` と `just test` と同じ解析フラグを使う。
 - Nixが提供する `clangd` ラッパーを、Zedと `just editor-check` の両方で使う。Zedからは固定の `/usr/bin/env direnv exec . clangd` を経由して起動するため、Zed自身のPATHによるclangdの自動選択に依存しない。標準ヘッダーとターゲットの問い合わせは、Arduinoデータディレクトリ内の `internal/**/bin/xtensa-esp32s3-elf-g++` と、Nixで固定したホストの `clang++` に限定する。Arduino側は実在する単一パスではなく、条件に合う各バージョンのコンパイラを許可する。
-- Arduinoデータディレクトリの既定値はmacOSの `$HOME/Library/Arduino15`。変更する場合は `ARDUINO_DIRECTORIES_DATA` をNix/direnv環境に設定し、Arduino CLIとラッパーの両方へ渡す。CLIの設定ファイルだけを変更するとラッパーには反映されない。
+- Arduinoデータディレクトリの既定値はmacOSの `$HOME/Library/Arduino15`、Linuxの `$HOME/.arduino15`。変更する場合は `ARDUINO_DIRECTORIES_DATA` をNix/direnv環境に設定し、Arduino CLIとラッパーの両方へ渡す。CLIの設定ファイルだけを変更するとラッパーには反映されない。
 - GCC専用のコード生成オプション3つは `.clangd` で解析時だけ除外する。ファームウェアのビルド設定は変えない。
 - 解析用の生成物は `build/editor-arduino/`。Zed設定ファイルは生成しない。Git管理する `.zed/settings.json` には、`.ino` をC++として解析するための言語対応付けと、direnv経由の固定起動設定を置く。Nixストアのパスやユーザー名を含む設定の生成は不要。旧設定がある環境では、生成済みのNixストアを指す `lsp.clangd.binary.path` と `--query-driver` 引数を、この固定起動設定に置き換える。
 - `just editor-check` は `clangd --check --check-locations=false` でスケッチとホストテストのエラー診断を確認する。エラーはターミナルに表示し、検出した時点で失敗する。リファクタリングの自己テストは実行しない。Zedでの起動状態の確認や、`just build` によるファームウェアのコンパイル確認は別途行う。
@@ -58,7 +72,8 @@ just editor
 参考：[ZedのC++設定](https://zed.dev/docs/languages/cpp)、[clangdのcompile commands](https://clangd.llvm.org/design/compile-commands)、[clangdの索引と開いたファイルの優先順位](https://clangd.llvm.org/design/indexing)、[システムヘッダーの解決](https://clangd.llvm.org/guides/system-headers)、[Espressif clangdの固定リリース](https://github.com/espressif/llvm-project/releases/tag/esp-21.1.3_20260408)。
 
 ## 操作と表示
-- 起動時は黒背景にロゴを縦横比を保って中央表示し、描画完了から約1秒後にメニューへ切り替わる。ロゴ表示中のタップはメニュー操作へ引き継がない。
+- 起動時は`Display buffers`・`Radar graphics`・`Sensor UART`・`Boot check` の結果を表示する。正常時は `Ready` を約1秒表示してメニューへ進む。ログはUSBシリアルにも出力する。
+- `Sensor UART OK` はLD2450の正常なフレームを受信したことを示す。検出対象が0でも成功する。最大2秒で受信できなければ `TIMEOUT` と配線確認メッセージを残し、タップでメニューへ進める。画面バッファ確保や起動確認の失敗時は `FAIL` を表示して停止する（OTA検証中はロールバックが優先される）。起動ログ中のタップはメニュー操作へ引き継がない。
 - 起動メニューの `Start` の後、`Sound` 画面で `On`（効果音あり）または `Off`（無音）を選んでトラッカーを開始。`Back` で起動メニューに戻る。選択は保存せず、起動のたびに選ぶ。メニューへ戻るには本体を再起動する。
 - CoreS3のスクリーンをタップで表示距離が **6m, 2m, 4m** と切り替え。
 - スクリーン下部中央に最も近い対象の距離を表示。
@@ -122,7 +137,7 @@ just editor
 - ESP32のCA証明書バンドルでHTTPSを検証する。証明書検証を省略する処理はない。
 - 機種、パーティション構成、バージョン、ファイルサイズ、SHA-256を確認する。ダウンロード先はこのリポジトリのリリースとGitHubのリリース配信ホストに限定する。
 - 更新先は未使用のアプリ領域。検証成功後だけ起動先を切り替え、途中失敗時は現在のファームウェアを維持する。NVSやLD2450の設定は更新対象に含めない。
-- 起動確認はディスプレイ用PSRAMバッファの確保とメニュー初期化の完了まで。OTA後、その前に起動に失敗した場合は対応ブートローダーのロールバックを利用する。センサーの実測や全機能の正常動作を自動判定するものではない。
+- OTAの起動確認はディスプレイ用PSRAMバッファの確保とレーダー描画準備の完了まで。OTA後、その前に起動に失敗した場合は対応ブートローダーのロールバックを利用する。UART受信の確認結果は別途表示するが、センサー未接続によるタイムアウトはOTAの起動失敗とはしない。距離の精度や全機能の正常動作を自動判定するものではない。
 - 公開ファイルの信頼性はHTTPSとGitHubリポジトリの管理権限に依存する。独立した署名鍵によるファームウェア署名は実装していない。
 
 ### リリースファイルを公開する
