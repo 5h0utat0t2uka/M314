@@ -1,6 +1,4 @@
 ## 接続とビルド
-![HLK-LD2450](./ld2450.jpg)
-![CoreS3](./s3.png)
 
 | LD2450 | CoreS3 PORT.C |
 | --- | --- |
