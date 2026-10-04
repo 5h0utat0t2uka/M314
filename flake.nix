@@ -67,8 +67,8 @@
         configureFlags = [ "--enable-tmpdir=/tmp" ];
         # The upstream C sources predate C99.
         env.CFLAGS = "-std=gnu89";
-        # Avoid a collision with the macOS SDK's reserved macro.
-        postPatch = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+        # Avoid reserved-macro collisions with both the macOS SDK and glibc.
+        postPatch = ''
           substituteInPlace *.[ch] --replace-quiet '__unused__' 'CTAGS_UNUSED'
         '';
       };
