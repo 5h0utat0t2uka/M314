@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: aarch64-darwin
+            runner: macos-15
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+          enable_kvm: false
+
+      # Ubuntu restricts user namespaces. Allow only Nix's Bubblewrap entry point,
+      # used by arduino-cli and clangd; do not disable AppArmor system-wide.
+      - name: Allow Nix FHS environments on Linux
+        if: runner.os == 'Linux'
+        run: |
+          restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -r "$restriction" && "$(cat "$restriction")" == 1 ]]; then
+            mkdir -p .tmp
+            cat > .tmp/nix-bwrap.apparmor <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile m314-nix-bwrap /nix/store/*-bubblewrap-*/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+            sudo apparmor_parser -r .tmp/nix-bwrap.apparmor
+          fi
+
+      - name: Evaluate all supported Nix systems
+        if: matrix.system == 'x86_64-linux'
+        run: nix flake check --all-systems --no-build
+
+      - name: Test and build release files
+        run: nix develop -c just release
+
+      - name: Check editor diagnostics
+        run: nix develop -c just editor-check

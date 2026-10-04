@@ -48,6 +48,18 @@ just monitor /dev/cu.usbmodem1101     # USB コンソールから LD2450 の領�
 just upload-erase /dev/cu.usbmodem1101
 ```
 
+## CI
+`.github/workflows/ci.yml` はPR、`main`へのpush、手動実行で動作する。  
+- `macos-15`（Apple Silicon）、`ubuntu-24.04`（x86_64）、`ubuntu-24.04-arm`（ARM64）で検証。
+- Nixの全3構成を `nix flake check --all-systems --no-build` で評価（Linux x86_64ジョブで1回）。
+- 各環境で `nix develop -c just release` を実行し、テスト9種類・ファームウェアのビルド・`firmware.bin`と`manifest.json`の生成を確認。
+- 各環境で `nix develop -c just editor-check` を実行し、clangdの診断を確認。
+- GitHub Releaseの作成やファイルの公開は行わない。画面・タッチ・センサー・音・OTAの実動作は実機で確認する。
+- Ubuntuのユーザー名前空間制限が有効な場合は、CIランナー内でNixのBubblewrapに限定したAppArmorプロファイルを読み込む。
+- ActionはコミットSHAで固定し、DependabotがNixとGitHub Actionsの更新PRを週1回作成する。CIのトークン権限は `contents: read`。
+
+参考：[GitHubの標準ランナー](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)、[NixインストールAction](https://github.com/cachix/install-nix-action)、[Ubuntuのユーザー名前空間制限](https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces)。
+
 ## Zed の C++ 解析設定
 プロジェクトルートで Nix 環境に入り、次を実行する。flake の変更後に direnv が承認を求めた場合は、先に `direnv allow` を実行する。
 ```sh
