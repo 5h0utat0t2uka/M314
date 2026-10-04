@@ -1,3 +1,5 @@
+<img alt="CI" src="https://img.shields.io/github/actions/workflow/status/5h0utat0t2uka/M314/ci.yml?branch=main&style=for-the-badge&label=CI"/> <img alt="dependabot" src="https://img.shields.io/github/actions/workflow/status/5h0utat0t2uka/M314/dependabot/dependabot-updates?branch=main&style=for-the-badge&label=dependabot"/>
+
 # M314 Motion Tracker 
 ![Motion Tracker](./docs/ss.png)  
 
