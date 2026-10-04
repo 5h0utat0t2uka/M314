@@ -205,17 +205,19 @@ uint16_t dimColor(uint16_t color, float brightness) {
 }
 
 void drawStatusPanel() {
-  // Radius-2 circular fillets join the existing sloped recess to its top/bottom.
+  // Align the upper fillet tangents with the inner radar semicircle endpoints.
   constexpr float radius = 2;
   constexpr float slope = 10.0f / 38;
   const float normal = sqrtf(1 + slope * slope);
   const float offset = radius * (normal - slope);
+  const float topEdge = polarX(kRadius * 0.45f, -90) + offset;
+  const float bottomEdge = topEdge + 10;
   for (int y = 178; y < 216; ++y) {
-    float edge = 86 + (y - 178) * slope;
+    float edge = topEdge + (y - 178) * slope;
     if (y < 180 - radius * slope / normal) {
-      edge = 86 - offset + sqrtf(fmaxf(0, radius * radius - (y - 180) * (y - 180)));
+      edge = topEdge - offset + sqrtf(fmaxf(0, radius * radius - (y - 180) * (y - 180)));
     } else if (y > 214 + radius * slope / normal) {
-      edge = 96 + offset - sqrtf(fmaxf(0, radius * radius - (y - 214) * (y - 214)));
+      edge = bottomEdge + offset - sqrtf(fmaxf(0, radius * radius - (y - 214) * (y - 214)));
     }
     const int solid = static_cast<int>(edge);
     screen.fillRect(4, y, solid - 4, 1, kPanelBackground);
@@ -225,9 +227,9 @@ void drawStatusPanel() {
     screen.drawPixel(320 - solid, y, edgeColor);
   }
   // Finish the two lower fillets at their horizontal tangents.
-  const int tangent = static_cast<int>(96 + offset);
+  const int tangent = static_cast<int>(bottomEdge + offset);
   screen.fillRect(4, 216, 313, 11, kPanelBackground);
-  const uint16_t edgeColor = dimColor(kPanelBackground, 96 + offset - tangent);
+  const uint16_t edgeColor = dimColor(kPanelBackground, bottomEdge + offset - tangent);
   screen.drawPixel(tangent, 216, edgeColor);
   screen.drawPixel(320 - tangent, 216, edgeColor);
   screen.fillRect(tangent + 1, 216, 319 - 2 * tangent, 1, kBackground);
