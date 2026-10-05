@@ -71,12 +71,13 @@ just editor
 新しくcloneしたとき、ソースファイルを追加したとき、ボード設定・ライブラリ・Nix環境を変更したときも `just editor` を再実行する。補完・診断は通常のコード編集に追従する。未開封ファイルの定義ジャンプ・検索は生成時のコピーを参照するため、必要に応じて再生成する。  
 
 - Arduino CLIの `--only-compilation-database` から、実際のincludeパス・マクロ・コンパイルオプションを取得する。生成された `build/editor-arduino/compile_commands.json` を `.clangd` から直接参照する。独自スクリプトによるパス変換は行わない。元ファイルの解析には、clangdが同名のビルド用コピーから推定したコンパイル設定を使う。
+- `.clangd` のターゲット・標準ヘッダー・オプション調整は、元ソースと `build/editor-arduino/sketch/` の両方に適用する。バックグラウンド索引はコピーを解析するため、設定が異なると元ソースの単独チェックでは検出できないヘッダー解決の問題が起こり得る。
 - ESP32-S3のXtensaを解析するため、Espressif公式clangdをNixでバージョンとSHA-256を固定して取得する。ホスト上のテストは `.clangd` でArduinoのデータベースを参照しない設定にし、Nix環境の `clang++` と `just test` と同じ解析フラグを使う。
 - Nixが提供する `clangd` ラッパーを、Zedと `just editor-check` の両方で使う。Zedからは固定の `/usr/bin/env direnv exec . clangd` を経由して起動するため、Zed自身のPATHによるclangdの自動選択に依存しない。標準ヘッダーとターゲットの問い合わせは、Arduinoデータディレクトリ内の `internal/**/bin/xtensa-esp32s3-elf-g++` と、Nixで固定したホストの `clang++` に限定する。Arduino側は実在する単一パスではなく、条件に合う各バージョンのコンパイラを許可する。
 - Arduinoデータディレクトリの既定値はmacOSの `$HOME/Library/Arduino15`、Linuxの `$HOME/.arduino15`。変更する場合は `ARDUINO_DIRECTORIES_DATA` をNix/direnv環境に設定し、Arduino CLIとラッパーの両方へ渡す。CLIの設定ファイルだけを変更するとラッパーには反映されない。
 - GCC専用のコード生成オプション3つは `.clangd` で解析時だけ除外する。ファームウェアのビルド設定は変えない。
 - 解析用の生成物は `build/editor-arduino/`。Zed設定ファイルは生成しない。Git管理する `.zed/settings.json` には、`.ino` をC++として解析するための言語対応付けと、direnv経由の固定起動設定を置く。Nixストアのパスやユーザー名を含む設定の生成は不要。旧設定がある環境では、生成済みのNixストアを指す `lsp.clangd.binary.path` と `--query-driver` 引数を、この固定起動設定に置き換える。
-- `just editor-check` は `clangd --check --check-locations=false` でスケッチとホストテストのエラー診断を確認する。エラーはターミナルに表示し、検出した時点で失敗する。リファクタリングの自己テストは実行しない。Zedでの起動状態の確認や、`just build` によるファームウェアのコンパイル確認は別途行う。
+- `just editor-check` は `clangd --check --check-locations=false` でスケッチ・索引用のビルド用コピー・ホストテストのエラー診断を確認する。エラーはターミナルに表示し、検出した時点で失敗する。リファクタリングの自己テストは実行しない。Zedでの起動状態の確認や、`just build` によるファームウェアのコンパイル確認は別途行う。
 - `.ino` の解析では `Arduino.h` を読み込むが、Arduinoの自動関数プロトタイプ生成は再現しない。宣言順序はC++として有効に保つ。
 - 定義ジャンプやシンボル検索は、未開封のファイルについてビルド用コピーを返すことがある。コピーを編集しても元ソースには反映されず、再生成で上書きされる。修正するときは `firmware/cores3/` の元ファイルを開く。元ファイルを開くと、その情報が索引で優先される。
 - テスト・リリース作成の一時作業ディレクトリは、Git管理対象外の `.tmp/` に作成し、終了時に削除する。
