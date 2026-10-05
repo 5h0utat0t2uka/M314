@@ -1,5 +1,6 @@
 If:
-  PathMatch: firmware/cores3/.*
+  # Background indexing uses the build copies listed in compile_commands.json.
+  PathMatch: [firmware/cores3/.*, build/editor-arduino/sketch/.*]
 CompileFlags:
   CompilationDatabase: build/editor-arduino
   BuiltinHeaders: QueryDriver

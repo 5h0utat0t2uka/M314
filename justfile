@@ -13,11 +13,11 @@ editor:
     --build-property "tools.ctags.path=$ARDUINO_CTAGS_PATH" \
     firmware/cores3
 
-# エディタと同じ clangd でスケッチとホストテストのエラー診断を検証
+# エディタと同じ clangd でスケッチ・索引用コピー・ホストテストの診断を検証
 editor-check: editor
   #!/usr/bin/env bash
   set -euo pipefail
-  for source in firmware/cores3/*.ino firmware/cores3/*.cpp tests/*.cpp; do
+  for source in firmware/cores3/*.ino firmware/cores3/*.cpp build/editor-arduino/sketch/*.cpp tests/*.cpp; do
     echo "Checking $source"
     clangd --check="$source" --check-locations=false --log=error
   done
