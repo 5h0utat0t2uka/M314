@@ -3,6 +3,30 @@
 #include <cstdio>
 
 int main() {
+  // The peak shares the detection cue clock; fading continues after the ripple.
+  ScanSnapshot animation;
+  assert(animation.markerOpacity() == 26);
+  unsigned previous = 26;
+  for (uint32_t phase = 0; phase <= ScanSnapshot::detectionDelayMs; ++phase) {
+    animation.phaseMs = phase;
+    const unsigned opacity = animation.markerOpacity();
+    assert(opacity >= previous && opacity >= 26);
+    if (phase <= 60) assert(opacity == 26);
+    previous = opacity;
+  }
+  assert(animation.markerOpacity() == 255);
+  for (uint32_t phase = ScanSnapshot::detectionDelayMs + 1;
+       phase < ScanSnapshot::periodMs; ++phase) {
+    animation.phaseMs = phase;
+    const unsigned opacity = animation.markerOpacity();
+    assert(opacity <= previous && opacity >= 26);
+    if (phase == ScanSnapshot::sweepMs) assert(opacity > 26 && opacity < 255);
+    if (phase >= 720) assert(opacity == 26);
+    previous = opacity;
+  }
+  animation.phaseMs = 0;
+  assert(animation.markerOpacity() == previous);  // No flash at the cycle boundary.
+
   constexpr uint32_t period = ScanSnapshot::periodMs;
   constexpr uint32_t midCycle = period / 2;
   static_assert(period > 2, "Tests require a mid-cycle sample");

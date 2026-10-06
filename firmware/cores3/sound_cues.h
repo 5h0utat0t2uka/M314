@@ -5,7 +5,7 @@
 // Use the display snapshot clock; never enqueue a backlog of missed sounds.
 class SoundCues {
  public:
-  static constexpr uint32_t detectionDelayMs = 120;
+  static constexpr uint32_t detectionDelayMs = ScanSnapshot::detectionDelayMs;
   struct Events {
     bool ripple = false;
     unsigned detection = 0;
