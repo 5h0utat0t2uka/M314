@@ -16,6 +16,7 @@ constexpr uint32_t kRadarBaud = 256000;
 constexpr int kOriginX = 160;
 constexpr int kOriginY = 164;
 constexpr int kRadius = 154;
+constexpr float kSpokeDotRadius = 3.0f;
 constexpr float kRadians = 0.01745329252f;
 constexpr uint16_t kBackground = 0x0000;
 constexpr uint16_t kGrid = 0x08E9;
@@ -39,13 +40,13 @@ RelativeHeading heading;
 ScanSnapshot scan;
 SoundCues soundCues;
 uint8_t nextDetectionChannel = 1;
-constexpr int kMarkerRadius = 10;
+constexpr int kMarkerRadius = 12;
 constexpr int kMarkerBlur = 3;
 constexpr int kMarkerExtent = kMarkerRadius + kMarkerBlur;
-constexpr uint8_t kMarkerOpacity = 128;  // 50% opacity = 50% transparency. (255 × 0.5 ≒ 128)
 uint8_t markerAlpha[kMarkerExtent * 2 + 1][kMarkerExtent * 2 + 1] = {};
 unsigned drawnRangeMeters = 0;
 int drawnRipplePhase = -1;
+uint8_t drawnMarkerOpacity = 0;
 uint32_t lastDrawMs = 0;
 uint32_t lastPanelMs = 0;
 uint32_t lastImuPollMs = 0;
@@ -127,6 +128,10 @@ void drawRotatingGrid(float rotation) {
       // Alternate spokes that stop at the inner arc with spokes passing through it.
       const float start = bearing % 90 == 0 ? inner * 0.65f : inner;
       drawRadial(start, kRadius, angle, kMuted);
+      if (bearing % 90 == 0 && angle >= -90 && angle <= 90) {
+        screen.drawSpot(polarX(start, angle), polarY(start, angle),
+                        kSpokeDotRadius, kMuted);
+      }
     }
   }
   for (int bearing = -180; bearing < 180; bearing += 90) {
@@ -179,19 +184,20 @@ void initializeMarker() {
         }
       }
       markerAlpha[y + kMarkerExtent][x + kMarkerExtent] =
-          (weight * kMarkerOpacity + 2048) / 4096;
+          (weight * 255 + 2048) / 4096;
     }
   }
 }
 
-void drawTargetMarker(int cx, int cy) {
+void drawTargetMarker(int cx, int cy, uint8_t opacity) {
   for (int dy = -kMarkerExtent; dy <= kMarkerExtent; ++dy) {
     const int y = cy + dy;
     if (y < 0 || y > kOriginY) continue;
     for (int dx = -kMarkerExtent; dx <= kMarkerExtent; ++dx) {
       const int x = cx + dx;
       if (x < 0 || x >= 320) continue;
-      const unsigned alpha = markerAlpha[dy + kMarkerExtent][dx + kMarkerExtent];
+      const unsigned alpha =
+          (markerAlpha[dy + kMarkerExtent][dx + kMarkerExtent] * opacity + 127) / 255;
       blendPixel(x, y, kBright, alpha);
     }
   }
@@ -265,11 +271,11 @@ void stopTrackerSound() {
   if (M5.Speaker.isPlaying()) M5.Speaker.stop();
 }
 
-void updateTrackerSound(uint32_t nowMs, bool snapshotChanged) {
+bool updateTrackerSound(uint32_t nowMs, bool snapshotChanged) {
   const auto events = soundCues.update(nowMs, scan, snapshotChanged);
   if (events.stopAll) {
     if (M5.Speaker.isPlaying()) M5.Speaker.stop();
-    return;
+    return false;
   }
   if (events.stopDetection) {
     for (int channel = 1; channel <= 2; ++channel) {
@@ -294,6 +300,7 @@ void updateTrackerSound(uint32_t nowMs, bool snapshotChanged) {
       Serial.println("Sound: detection playback failed");
     }
   }
+  return events.detection != 0;
 }
 
 void drawStatus(uint32_t nowMs, bool updatePanel = true) {
@@ -302,13 +309,28 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   const bool imuFresh = heading.fresh(nowMs);
   const float rotation = imuFresh && heading.ready ? heading.degrees : 0;
   const bool snapshotChanged = scan.update(nowMs, radar);
-  updateTrackerSound(nowMs, snapshotChanged);
+  const bool detectionCue = updateTrackerSound(nowMs, snapshotChanged);
   const bool gridChanged = !isfinite(cachedRotation) ||
       fabsf(RelativeHeading::wrap(rotation - cachedRotation)) >= 0.15f;
   const int ripplePhase = fresh && scan.phaseMs < ScanSnapshot::sweepMs
       ? static_cast<int>(scan.phaseMs) : -1;
+  bool hasVisibleTarget = false;
+  if (scan.valid) {
+    for (const auto& target : scan.targets) {
+      if (target.present && target.yMm >= 0 &&
+          hypotf(target.xMm, target.yMm) <= rangeMeters * 1000.0f) {
+        hasVisibleTarget = true;
+        break;
+      }
+    }
+  }
+  // The first frame past 120 ms also submits the sound; make that frame fully
+  // opaque even when frame timing skips the exact peak of the envelope.
+  const uint8_t markerOpacity = hasVisibleTarget
+      ? (detectionCue ? 255 : scan.markerOpacity()) : 0;
   const bool redrawRadar = gridChanged || snapshotChanged ||
-      rangeMeters != drawnRangeMeters || ripplePhase != drawnRipplePhase;
+      rangeMeters != drawnRangeMeters || ripplePhase != drawnRipplePhase ||
+      markerOpacity != drawnMarkerOpacity;
   updatePanel = updatePanel || snapshotChanged;
   if (!redrawRadar && !updatePanel) return;
   if (redrawRadar) {
@@ -323,6 +345,7 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
     }
     if (ripplePhase >= 0) drawRipple(scan.phaseMs);
     drawnRipplePhase = ripplePhase;
+    drawnMarkerOpacity = markerOpacity;
     drawnRangeMeters = rangeMeters;
   }
 
@@ -346,7 +369,7 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
       }
       const int x = kOriginX + lroundf(target.xMm * kRadius / rangeMm);
       const int y = kOriginY - lroundf(target.yMm * kRadius / rangeMm);
-      drawTargetMarker(x, y);
+      drawTargetMarker(x, y, markerOpacity);
       snprintf(text, sizeof(text), "%u", static_cast<unsigned>(i + 1));
       drawText(text, x > 289 ? x - 21 : x + 15, y < 16 ? y + 8 : y - 10, kBright);
     }
