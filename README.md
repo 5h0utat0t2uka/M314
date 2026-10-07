@@ -1,4 +1,8 @@
-<img alt="CI" src="https://img.shields.io/github/actions/workflow/status/5h0utat0t2uka/M314/ci.yml?branch=main&style=for-the-badge&label=CI"/> <img alt="dependabot" src="https://img.shields.io/github/actions/workflow/status/5h0utat0t2uka/M314/dependabot/dependabot-updates?branch=main&style=for-the-badge&label=dependabot"/>
+<p align="left">
+  <a href="https://github.com/5h0utat0t2uka/M314/actions/workflows/ci.yml"><img src="https://github.com/5h0utat0t2uka/M314/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/5h0utat0t2uka/M314/actions/workflows/dependabot/dependabot-updates"><img src="https://github.com/5h0utat0t2uka/M314/actions/workflows/dependabot/dependabot-updates/badge.svg?branch=main" alt="dependabot"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/5h0utat0t2uka/M314?color=blue" alt="License: MIT"></a>
+</p>
 
 # M314
 ![Motion Tracker](./docs/ss.png)  
