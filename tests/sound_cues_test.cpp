@@ -7,7 +7,7 @@ static void silent(const SoundCues::Events& events) {
 }
 
 int main() {
-  ld2450::Parser radar;
+  radar_sensor::Report radar;
   ScanSnapshot scan;
   SoundCues cues;
   radar.received = true;
@@ -78,5 +78,13 @@ int main() {
   assert(cues.update(start + 120, wrapped, false).detection == 1);
   cues.setEnabled(false);
   silent(cues.update(start + 800, wrapped, true));
+  // Counts above three remain consistent with the five-target display.
+  cues.setEnabled(true);
+  ScanSnapshot five;
+  for (auto& target : radar.targets) target.present = true;
+  radar.lastFrameMs = 100;
+  assert(five.update(100, radar));
+  assert(cues.update(100, five, true).ripple);
+  assert(cues.update(220, five, false).detection == 5);
   std::puts("Sound cue tests passed (Off, sweep sync, counts, silence, timeout, stalls, wraparound)");
 }

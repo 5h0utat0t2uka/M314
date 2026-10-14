@@ -33,6 +33,9 @@ test:
     tests/ld2450_test.cpp -o "$test_dir/ld2450_test"
   "$test_dir/ld2450_test"
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    tests/ld2460_test.cpp -o "$test_dir/ld2460_test"
+  "$test_dir/ld2460_test"
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     tests/relative_heading_test.cpp -o "$test_dir/relative_heading_test"
   "$test_dir/relative_heading_test"
   clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \

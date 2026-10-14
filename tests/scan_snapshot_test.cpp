@@ -30,16 +30,18 @@ int main() {
   constexpr uint32_t period = ScanSnapshot::periodMs;
   constexpr uint32_t midCycle = period / 2;
   static_assert(period > 2, "Tests require a mid-cycle sample");
-  ld2450::Parser radar;
+  radar_sensor::Report radar;
   ScanSnapshot scan;
   assert(!scan.update(0, radar) && !scan.valid);
   radar.received = true;
+  radar.speedAvailable = true;
   radar.lastFrameMs = midCycle;
   radar.targets[0] = {100, 200, 30, 1, true};
   assert(!scan.update(midCycle, radar) && !scan.valid);
   radar.lastFrameMs = period - 1;
   assert(!scan.update(period - 1, radar));
   assert(scan.update(period, radar) && scan.phaseMs == 0 && scan.valid);
+  assert(scan.speedAvailable);
   radar.targets[0] = {900, 1000, -50, 1, true};
   radar.targets[1] = {0, 100, 5, 1, true};
   radar.lastFrameMs = 2 * period - 1;
@@ -57,6 +59,7 @@ int main() {
     assert(scan.valid);
   }
   assert(scan.update(timeoutAt, radar) && !scan.valid);
+  assert(!scan.speedAvailable);
   assert(!scan.targets[0].present && !scan.targets[1].present);
   uint32_t recoveryAt = timeoutAt + 1;
   if (recoveryAt % period == 0) {
@@ -83,5 +86,16 @@ int main() {
   assert(wrapped.update(start, radar));
   radar.lastFrameMs = start + period;
   assert(wrapped.update(start + period, radar) && wrapped.phaseMs == 0);
+  // LD2460's fourth/fifth slots and unavailable speed share the same snapshot.
+  ScanSnapshot five;
+  radar.speedAvailable = false;
+  radar.lastFrameMs = 100;
+  radar.targets[3] = {-2000, 3000, 0, 0, true};
+  radar.targets[4] = {3000, 4000, 0, 0, true};
+  assert(five.update(100, radar) && !five.speedAvailable);
+  assert(five.targets[3].present && five.targets[3].xMm == -2000);
+  assert(five.targets[4].present && five.targets[4].yMm == 4000);
+  assert(five.update(1100, radar) && !five.valid);
+  for (const auto& target : five.targets) assert(!target.present);
   std::puts("Scan snapshot tests passed (synchronization, timeout, recovery, wraparound)");
 }

@@ -1,11 +1,32 @@
 ## 接続とビルド
 
-| LD2450 | CoreS3 PORT.C |
-| --- | --- |
-| 5V | V（5V） |
-| RX | T（TX / GPIO17） |
-| TX | R（RX / GPIO18） |
-| GND | G（GND） |
+| CoreS3 PORT.C | Grove線色 | LD2450 | LD2460 |
+| --- | --- | --- | --- |
+| V（5V） | 赤 | 5V | 5V（1番） |
+| G（GND） | 黒 | GND | GND（2番） |
+| R（RX / GPIO18） | 白 | TX | Tx2（7番） |
+| T（TX / GPIO17） | 黄 | RX | Rx2（8番） |
+
+接続・交換は電源を外した状態で行う。LD2460はUART2を使用し、VDD33には接続しない。
+起動時に256000bpsと115200bpsを2秒ずつ試し、正常な検出フレームから機種を判別する。センサーの設定は書き換えない。
+この2つ以外の通信速度に設定されたセンサーには対応していない。機種の交換後はCoreS3を再起動する。
+
+LD2460では最大5対象のX/Y座標を受信し、0.1m単位から表示用のmmへ変換する。速度は報告されないため `V --cm/s` と表示する。
+既定の側面設置モード（前方が+Y、右が+X）を想定する。天井設置の360°表示や設置モード・高さ・角度の変更は実装していない。
+対象番号は受信パケット内の順番で、人を継続識別するIDではない。
+
+根拠：[LD2460公式ピン定義](https://www.hlktech.net/index.php?id=1335&cateid=768)、[メーカー通信仕様V1.0（販売店掲載PDF）](https://storage.googleapis.com/mauser-public-images/prod_description_document%2F2025%2F260%2Fc4fbc62952a566f34adad3f4ce506cfa_hlk-ld2460_serial_port_communication_protocol_v1.0.pdf)、[ESPHome公式LD2460資料](https://next.esphome.io/components/sensor/ld2460/)。
+
+### はんだ付け後の受信確認
+1. 赤→5V、黒→GND、白→Tx2、黄→Rx2を確認し、各接続を絶縁する。
+2. CoreS3の電源を切った状態でPort Cに接続し、CoreS3をUSBでMacに接続する。
+3. 開発環境で `just test` と `just build` を実行する。
+4. `just boards` でポートを確認し、`just upload <確認したポート>` で通常の書き込みを行う。
+5. 起動画面の `Sensor UART LD2460` が受信成功の目印。`Start` → `Sound Off` で開始し、センサー前で動いて点と距離の変化を確認する。
+
+`TIMEOUT` は正常な検出フレームをまだ受信できていないことを示す。機種の探索は継続するので、センサー前で動いて確認する。
+USBログは `just monitor <確認したポート>` で開き、CoreS3を再起動して確認する。正常時は `Sensor detected: LD2460 (115200 baud)` と出る。
+これはセンサーからCoreS3への受信確認であり、CoreS3からセンサーへの送信線の導通や距離精度の検証ではない。
 
 開発環境は Apple Silicon の macOS（`aarch64-darwin`）と、64bit Linux（`x86_64-linux` / `aarch64-linux`）向けに定義している。Nix（flakes 有効）をインストールし、`nix develop` または direnv の `direnv allow` で入る。Intel Mac・32bit Linux は対象外。  
 Arduino 公式の `ctags` `5.8-arduino11` を各ホスト向けにNixでビルドし、`$ARDUINO_CTAGS_PATH` を `--build-property` で指定する。Apple SiliconではIntel用配布バイナリを使わずに済む。
@@ -16,7 +37,7 @@ Linuxでは、NixpkgsのArduino CLIに付属するFHS互換環境を利用する
 CoreS3 の Quad PSRAM は `PSRAM=enabled` を明示。
 
 ## 開発環境のOS別検証
-3構成のNix定義評価、Linux版clangdのSHA-256と共有ライブラリ依存を確認済み。Apple SiliconのmacOSではビルド・テスト9種類・エディタ解析が成功。Linux上の実行・USB書き込みは未検証。各OSで以下を確認する。
+開発環境導入時に3構成のNix定義評価、Linux版clangdのSHA-256と共有ライブラリ依存を確認済み。LD2450対応時点ではApple SiliconのmacOSでビルド・当時のテスト9種類・エディタ解析が成功。Linux上の実行・USB書き込みは未検証。変更後は各OSで以下を確認する。
 ```sh
 nix develop -c just test
 nix develop -c just build
@@ -52,7 +73,7 @@ just upload-erase /dev/cu.usbmodem1101
 `.github/workflows/ci.yml` はPR、`main`へのpush、手動実行で動作する。  
 - `macos-15`（Apple Silicon）、`ubuntu-24.04`（x86_64）、`ubuntu-24.04-arm`（ARM64）で検証。
 - Nixの全3構成を `nix flake check --all-systems --no-build` で評価（Linux x86_64ジョブで1回）。
-- 各環境で `nix develop -c just release` を実行し、テスト9種類・ファームウェアのビルド・`firmware.bin`と`manifest.json`の生成を確認。
+- 各環境で `nix develop -c just release` を実行し、テスト10種類・ファームウェアのビルド・`firmware.bin`と`manifest.json`の生成を確認。
 - 各環境で `nix develop -c just editor-check` を実行し、clangdの診断を確認。
 - GitHub Releaseの作成やファイルの公開は行わない。画面・タッチ・センサー・音・OTAの実動作は実機で確認する。
 - Ubuntuのユーザー名前空間制限が有効な場合は、CIランナー内でNixのBubblewrapに限定したAppArmorプロファイルを読み込む。
@@ -86,7 +107,7 @@ just editor
 
 ## 操作と表示
 - 起動時は`Display buffers`・`Radar graphics`・`Sensor UART`・`Boot check` の結果を表示する。正常時は `Ready` を約1秒表示してメニューへ進む。ログはUSBシリアルにも出力する。
-- `Sensor UART OK` はLD2450の正常なフレームを受信したことを示す。検出対象が0でも成功する。最大2秒で受信できなければ `TIMEOUT` と配線確認メッセージを残し、タップでメニューへ進める。画面バッファ確保や起動確認の失敗時は `FAIL` を表示して停止する（OTA検証中はロールバックが優先される）。起動ログ中のタップはメニュー操作へ引き継がない。
+- `Sensor UART LD2450` / `Sensor UART LD2460` は、その機種の正常なフレームを受信したことを示す。検出対象が0のフレームでも成功する。最大4秒で受信できなければ `TIMEOUT` と未受信メッセージを残し、タップでメニューへ進める。探索は継続し、起動ログ表示中に受信できれば機種名を表示してメニューへ進む。画面バッファ確保や起動確認の失敗時は `FAIL` を表示して停止する（OTA検証中はロールバックが優先される）。起動ログ中のタップはメニュー操作へ引き継がない。
 - 起動メニューの `Start` の後、`Sound` 画面で `On`（効果音あり）または `Off`（無音）を選んでトラッカーを開始。`Back` で起動メニューに戻る。選択は保存せず、起動のたびに選ぶ。メニューへ戻るには本体を再起動する。
 - CoreS3のスクリーンをタップで表示距離が **6m, 2m, 4m** と切り替え。
 - スクリーン下部中央に最も近い対象の距離を表示。
@@ -103,15 +124,15 @@ just editor
 | `RNG` | トラッカー表示の距離範囲（m） |
 | `REL` | ジャイロの基準方向からの相対角度（度） |
 | `STILL 2s` | ジャイロの静止補正中（赤文字）。本体を約2秒間静止させる |
-| `T1`〜`T3` | 最も近い対象のスロット番号 |
+| `T1`〜`T5` | 最も近い対象のスロット番号（LD2450は最大T3） |
 | `T-- N0` | 通信は正常だが、現在の検出対象はない |
 | `T-- N--` | 有効なデータを未受信・受信途絶、または起動／復旧後の表示更新待ち |
-| `N1`〜`N3` | センサーが報告した検出対象数（厳密な在室人数ではない） |
-| `V` | 最も近い対象の速度（cm/s）。対象がない場合は `V --cm/s` |
+| `N1`〜`N5` | センサーが報告した検出対象数（LD2450は最大N3。厳密な在室人数ではない） |
+| `V` | 最も近い対象の速度（cm/s）。対象がない場合やLD2460接続時は `V --cm/s` |
 
 ### 効果音
 - `On` は22,050 Hz・16bitモノラルPCMを内蔵スピーカーで再生する。波紋音は800ms周期の開始時、検出音はその120ms後に鳴る。
-- 検出音の高さは表示中の `N` と同じ対象数で決まる（1体: 1735 Hz、2体: 2063 Hz、3体: 2454 Hz）。距離による画面外の対象も、`N` と同じく数える。
+- 検出音の高さは表示中の `N` と同じ対象数で決まる（1体: 1735 Hz、2体: 2063 Hz、3体以上: 2454 Hz）。距離による画面外の対象も、`N` と同じく数える。
 - 約1.2秒の検出音を2つの再生チャンネルで交互に鳴らし、次の周期でも余韻を切らない。表示の対象数が0になったら検出音を止め、波紋音のみ継続する。
 - センサー通信の途絶中、USBからのセンサー設定中、起動メニューでは効果音を停止する。通信復帰後は次の表示更新から再開する。処理が遅れた場合は古い音をまとめて鳴らさない。
 - 波形は `firmware/cores3/tracker_sounds.h` に格納し、フラッシュからM5Unifiedの再生タスクに渡す。実行中の波形生成や音声ファイルのダウンロードは不要。`Off` ではスピーカーの再生タスクを停止する。
@@ -172,6 +193,8 @@ just editor
 - バージョンを上げた実際のリリースからのOTA、更新後のバージョンとWi-Fi設定・LD2450設定の保持。
 
 ## LD2450
+以下の `filter` / `bluetooth` コマンドは、LD2450と判別できたときだけ実行できる。LD2460接続時や機種未判別時はエラーを表示し、UARTコマンドを送信しない。
+
 通常のファームウェアを書き込んだ後、近距離領域フィルターをUSBコンソールからCoreS3経由でUART設定する。  
 ```sh 
 just upload /dev/cu.usbmodem1101

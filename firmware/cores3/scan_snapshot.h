@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ld2450.h"
+#include "radar_report.h"
 
 // Display samples share the ripple clock; UART reception remains independent.
 class ScanSnapshot {
@@ -8,8 +8,9 @@ class ScanSnapshot {
   static constexpr uint32_t periodMs = 800;
   static constexpr uint32_t sweepMs = 300;
   static constexpr uint32_t detectionDelayMs = 120;
-  ld2450::Target targets[3] = {};
+  radar_sensor::Target targets[radar_sensor::maxTargets] = {};
   bool valid = false;
+  bool speedAvailable = false;
   uint32_t phaseMs = 0;
 
   // Share the sound's peak time, including when sound is disabled.
@@ -30,7 +31,7 @@ class ScanSnapshot {
     return minimum + (span * (fadeMs - elapsed) + fadeMs / 2) / fadeMs;
   }
 
-  bool update(uint32_t nowMs, const ld2450::Parser& radar) {
+  bool update(uint32_t nowMs, const radar_sensor::Report& radar) {
     bool boundary = !started_;
     if (!started_) {
       started_ = true;
@@ -45,11 +46,13 @@ class ScanSnapshot {
     if (!radar.fresh(nowMs)) {
       const bool changed = valid;
       valid = false;
+      speedAvailable = false;
       for (auto& target : targets) target = {};
       return changed;
     }
     if (!boundary) return false;
-    for (size_t i = 0; i < 3; ++i) targets[i] = radar.targets[i];
+    for (size_t i = 0; i < radar_sensor::maxTargets; ++i) targets[i] = radar.targets[i];
+    speedAvailable = radar.speedAvailable;
     valid = true;
     return true;
   }

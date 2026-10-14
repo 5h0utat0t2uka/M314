@@ -7,8 +7,8 @@ struct TargetTrail {
   static constexpr uint32_t lifetimeMs = 2000;
   static constexpr size_t capacity = 24;
   struct Point {
-    int16_t xMm;
-    int16_t yMm;
+    int32_t xMm;
+    int32_t yMm;
     uint32_t timeMs;
   };
   Point points[capacity] = {};
