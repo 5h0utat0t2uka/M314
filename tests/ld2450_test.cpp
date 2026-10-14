@@ -27,6 +27,8 @@ int main() {
   assert(!parser.received);
   assert(parser.push(sample.back(), 100));
   assert(parser.frames == 1);
+  assert(parser.speedAvailable);
+  assert(!parser.targets[3].present && !parser.targets[4].present);
   assert(parser.targets[0].present);
   assert(parser.targets[0].xMm == -782);
   assert(parser.targets[0].yMm == 1713);

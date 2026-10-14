@@ -3,27 +3,16 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "radar_report.h"
 
 namespace ld2450 {
 
-struct Target {
-  int16_t xMm = 0;
-  int16_t yMm = 0;
-  int16_t speedCmS = 0;
-  uint16_t resolutionMm = 0;
-  bool present = false;
-};
+using Target = radar_sensor::Target;
 
 // HLK-LD2450 serial protocol V1.03, section 2.3.
 // A fixed window also recovers after garbage, truncated frames, or a lost byte.
-class Parser {
+class Parser : public radar_sensor::Report {
  public:
-  Target targets[3] = {};
-  uint32_t frames = 0;
-  uint32_t invalidFrames = 0;
-  uint32_t lastFrameMs = 0;
-  bool received = false;
-
   bool push(uint8_t byte, uint32_t nowMs) {
     if (used_ == sizeof(buffer_)) {
       memmove(buffer_, buffer_ + 1, sizeof(buffer_) - 1);
@@ -55,11 +44,8 @@ class Parser {
     ++frames;
     lastFrameMs = nowMs;
     received = true;
+    speedAvailable = true;
     return true;
-  }
-
-  bool fresh(uint32_t nowMs) const {
-    return received && static_cast<uint32_t>(nowMs - lastFrameMs) < 1000;
   }
 
  private:
