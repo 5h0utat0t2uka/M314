@@ -126,5 +126,38 @@ int main() {
   feed(automatic, ld2450Sample, 300);
   assert(automatic.frames == 1 && automatic.speedAvailable);
 
+  // Explicit selection must not accept the other sensor, even before a report.
+  automatic.select(radar_sensor::Model::LD2460);
+  assert(!automatic.received && !automatic.speedAvailable);
+  feed(automatic, ld2450Sample, 400);
+  assert(!automatic.received && automatic.model == radar_sensor::Model::LD2460);
+  feed(automatic, empty, 500);
+  assert(automatic.fresh(500));  // Zero targets still confirm the connection.
+  for (const auto& target : automatic.targets) assert(!target.present);
+
+  // Changing ports discards old targets and partial frames from both parsers.
+  feed(automatic, five, 600);
+  automatic.push(sample[0], 610);
+  automatic.select(radar_sensor::Model::LD2450);
+  assert(!automatic.fresh(610) && automatic.frames == 0);
+  for (const auto& target : automatic.targets) assert(!target.present);
+  feed(automatic, sample, 620);
+  assert(!automatic.received);
+  feed(automatic, ld2450Sample, 630);
+  assert(automatic.frames == 1 && automatic.speedAvailable);
+  assert(automatic.targets[0].speedCmS == -16);
+  assert(!automatic.targets[4].present);
+
+  // Retrying the same selection also requires a new complete report.
+  automatic.select(radar_sensor::Model::LD2450);
+  for (size_t i = 0; i < 15; ++i) automatic.push(ld2450Sample[i], 700);
+  automatic.select(radar_sensor::Model::LD2450);
+  for (size_t i = 15; i < ld2450Sample.size(); ++i) automatic.push(ld2450Sample[i], 710);
+  assert(!automatic.received);
+  feed(automatic, ld2450Sample, 720);
+  assert(automatic.fresh(720));
+  automatic.select(radar_sensor::Model::Unknown);
+  assert(!automatic.received && automatic.model == radar_sensor::Model::Unknown);
+
   std::puts("LD2460 and sensor detection tests passed");
 }

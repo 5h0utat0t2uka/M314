@@ -7,11 +7,28 @@ namespace radar_sensor {
 
 enum class Model { Unknown, LD2450, LD2460 };
 
+struct Connection {
+  int rx;
+  int tx;
+  uint32_t baud;
+};
+
+constexpr Connection connection(Model model) {
+  if (model == Model::LD2450) return {8, 9, 256000};  // PORT.B
+  if (model == Model::LD2460) return {18, 17, 115200};  // PORT.C
+  return {-1, -1, 0};
+}
+
 // Identify a sensor only from a complete valid report, never from UART noise.
-// Once identified, keep its protocol until reboot; a timeout just clears data.
+// A selected model accepts only that protocol; a timeout just clears data.
 class Parser : public Report {
  public:
   Model model = Model::Unknown;
+
+  void select(Model selected) {
+    reset();
+    model = selected;
+  }
 
   bool push(uint8_t byte, uint32_t nowMs) {
     if (model != Model::LD2460 && ld2450_.push(byte, nowMs)) {

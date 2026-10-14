@@ -1,15 +1,18 @@
 ## 接続とビルド
 
-| CoreS3 PORT.C | Grove線色 | LD2450 | LD2460 |
+| Grove線色 | LD2450（PORT.B） | LD2460（PORT.C） | センサー側 |
 | --- | --- | --- | --- |
-| V（5V） | 赤 | 5V | 5V（1番） |
-| G（GND） | 黒 | GND | GND（2番） |
-| R（RX / GPIO18） | 白 | TX | Tx2（7番） |
-| T（TX / GPIO17） | 黄 | RX | Rx2（8番） |
+| 赤 | 5V | 5V | 5V（LD2460は1番） |
+| 黒 | GND | GND | GND（LD2460は2番） |
+| 白 | RX / GPIO8 | RX / GPIO18 | LD2450 TX / LD2460 Tx2（7番） |
+| 黄 | TX / GPIO9 | TX / GPIO17 | LD2450 RX / LD2460 Rx2（8番） |
 
 接続・交換は電源を外した状態で行う。LD2460はUART2を使用し、VDD33には接続しない。
-起動時に256000bpsと115200bpsを2秒ずつ試し、正常な検出フレームから機種を判別する。センサーの設定は書き換えない。
-この2つ以外の通信速度に設定されたセンサーには対応していない。機種の交換後はCoreS3を再起動する。
+両方を接続したまま、起動メニューの `Start` → `Sensor` で使用するセンサーを選ぶ。
+LD2450はPort B・256000bps、LD2460はPort C・115200bpsで受信する。従来Port Cに接続していたLD2450は、センサー側の配線を変えずCoreS3側をPort Bへ差し替える。
+選択した機種の正常な検出フレームで通信を確認する。通信速度の自動探索やセンサー設定の書き換えは行わないため、各センサーの工場出荷時の通信速度で使用する。
+未選択側のUARTは受信しないが、両方のセンサーに給電される。選択による電源・電波の停止は行わない。
+根拠：[CoreS3公式ピン配置](https://docs.m5stack.com/en/core/CoreS3#hy2-0-4p)、[Espressif公式UART仕様](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/serial.html)。
 
 LD2460では最大5対象のX/Y座標を受信し、0.1m単位から表示用のmmへ変換する。速度は報告されないため `V --cm/s` と表示する。
 既定の側面設置モード（前方が+Y、右が+X）を想定する。天井設置の360°表示や設置モード・高さ・角度の変更は実装していない。
@@ -22,10 +25,10 @@ LD2460では最大5対象のX/Y座標を受信し、0.1m単位から表示用の
 2. CoreS3の電源を切った状態でPort Cに接続し、CoreS3をUSBでMacに接続する。
 3. 開発環境で `just test` と `just build` を実行する。
 4. `just boards` でポートを確認し、`just upload <確認したポート>` で通常の書き込みを行う。
-5. 起動画面の `Sensor UART LD2460` が受信成功の目印。`Start` → `Sound Off` で開始し、センサー前で動いて点と距離の変化を確認する。
+5. `Start` → `LD2460 - Port C` を選ぶ。正常なデータを受信すると `LD2460 connected` とSound選択画面を表示する。`Off` で開始し、センサー前で動いて点と距離の変化を確認する。
 
-`TIMEOUT` は正常な検出フレームをまだ受信できていないことを示す。機種の探索は継続するので、センサー前で動いて確認する。
-USBログは `just monitor <確認したポート>` で開き、CoreS3を再起動して確認する。正常時は `Sensor detected: LD2460 (115200 baud)` と出る。
+4秒で受信できなければ `No data. Check connection.` を表示する。`Retry` で再確認、`Choose sensor` で選び直し、`Back` で起動メニューに戻る。対象0のフレームでも通信確認は成功するため、人がいないこと自体は失敗の理由にならない。
+USBログは `just monitor <確認したポート>` で開く。選択時に `Sensor selected: LD2460 (Port C, 115200 baud)`、受信成功時に `Sensor connected: LD2460` と出る。
 これはセンサーからCoreS3への受信確認であり、CoreS3からセンサーへの送信線の導通や距離精度の検証ではない。
 
 開発環境は Apple Silicon の macOS（`aarch64-darwin`）と、64bit Linux（`x86_64-linux` / `aarch64-linux`）向けに定義している。Nix（flakes 有効）をインストールし、`nix develop` または direnv の `direnv allow` で入る。Intel Mac・32bit Linux は対象外。  
@@ -106,9 +109,9 @@ just editor
 参考：[ZedのC++設定](https://zed.dev/docs/languages/cpp)、[clangdのcompile commands](https://clangd.llvm.org/design/compile-commands)、[clangdの索引と開いたファイルの優先順位](https://clangd.llvm.org/design/indexing)、[システムヘッダーの解決](https://clangd.llvm.org/guides/system-headers)、[Espressif clangdの固定リリース](https://github.com/espressif/llvm-project/releases/tag/esp-21.1.3_20260408)。
 
 ## 操作と表示
-- 起動時は`Display buffers`・`Radar graphics`・`Sensor UART`・`Boot check` の結果を表示する。正常時は `Ready` を約1秒表示してメニューへ進む。ログはUSBシリアルにも出力する。
-- `Sensor UART LD2450` / `Sensor UART LD2460` は、その機種の正常なフレームを受信したことを示す。検出対象が0のフレームでも成功する。最大4秒で受信できなければ `TIMEOUT` と未受信メッセージを残し、タップでメニューへ進める。探索は継続し、起動ログ表示中に受信できれば機種名を表示してメニューへ進む。画面バッファ確保や起動確認の失敗時は `FAIL` を表示して停止する（OTA検証中はロールバックが優先される）。起動ログ中のタップはメニュー操作へ引き継がない。
-- 起動メニューの `Start` の後、`Sound` 画面で `On`（効果音あり）または `Off`（無音）を選んでトラッカーを開始。`Back` で起動メニューに戻る。選択は保存せず、起動のたびに選ぶ。メニューへ戻るには本体を再起動する。
+- 起動時は`Display buffers`・`Radar graphics`・`Sensor SELECT`・`Boot check` を表示する。正常時は `Ready` を約1秒表示してメニューへ進む。センサー受信は選択後に確認する。ログはUSBシリアルにも出力する。
+- 画面バッファ確保や起動確認の失敗時は `FAIL` を表示して停止する（OTA検証中はロールバックが優先される）。起動ログ中のタップはメニュー操作へ引き継がない。センサー未接続でもWi-Fi設定・OTA更新は利用できる。
+- 起動メニューの `Start` → `Sensor` でセンサーを選択し、通信確認後に `Sound` 画面へ進む。`On`（効果音あり）または `Off`（無音）でトラッカーを開始する。Sound選択時にも受信が新鮮か確認し、途絶していれば再試行画面へ戻す。Sound画面の `Back` はセンサー選択へ戻る。選択は保存せず、起動のたびに選ぶ。検出画面からメニューへ戻るには本体を再起動する。
 - CoreS3のスクリーンをタップで表示距離が **6m, 2m, 4m** と切り替え。
 - スクリーン下部中央に最も近い対象の距離を表示。
 - スクリーン下部の左に表示範囲・相対角度、右に対象番号と検出数・速度をそれぞれ2行で表示。
@@ -187,6 +190,9 @@ just editor
 ボード設定は現在の構成と同じ `app3M_fat9M_16MB`（アプリ3MiB×2）に固定している。
 
 ### 実機で確認する項目
+- LD2450をPort B、LD2460をPort Cへ接続し、各選択で通信確認と検出が開始できること。LD2450は速度を表示し、LD2460は `V --cm/s` を表示すること。
+- Sound画面からセンサー選択へ戻り、別機種を選んでも前の対象や速度が残らないこと。
+- 電源を切って片方を外してから起動し、未接続側では4秒後に再試行画面が表示され、接続済み側を選び直せること。
 - Wi-Fiの正しいパスワード／誤ったパスワード、`Back`、5分経過による設定モード終了。
 - 再起動後の接続情報保持、`Start` 後の既存レーダー操作。
 - 最新版・更新なし・リリースなし・ネットワーク切断時の表示。
@@ -239,7 +245,7 @@ just monitor /dev/cu.usbmodem1101
 - [M5Unified IMU API](https://docs.m5stack.com/en/arduino/m5unified/imu_class)
 - [M5Unified 0.2.23 の IMU 公式サンプル](https://github.com/m5stack/M5Unified/blob/0.2.23/examples/Basic/Imu/Imu.ino)
 - [HLK-LD2450 公式通信仕様 V1.03（2.3節：受信フレーム）](https://h.hlktech.com/download/HLK-LD2450-24G/1/LD2450%20%E4%B8%B2%E5%8F%A3%E9%80%9A%E4%BF%A1%E5%8D%8F%E8%AE%AE%20V1.03.pdf)
-- [CoreS3 のピン配置（PORT.C）](https://docs.m5stack.com/en/core/CoreS3#pinmap)
+- [CoreS3 のピン配置（PORT.B / PORT.C）](https://docs.m5stack.com/en/core/CoreS3#pinmap)
 - [M5Stack CoreS3 の Arduino 手順](https://docs.m5stack.com/en/arduino/m5cores3/program)
 - [M5Stack ボード用パッケージ一覧](https://static-cdn.m5stack.com/resource/arduino/package_m5stack_index.json)
 - [Arduino CLI ビルドプロファイル仕様](https://github.com/arduino/arduino-cli/blob/master/docs/sketch-project-file.md)
