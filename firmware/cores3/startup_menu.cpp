@@ -42,7 +42,8 @@ void updateProgress(const char* message, int percent) {
 }
 }  // namespace
 
-void StartupMenu::begin() {
+void StartupMenu::begin(void (*selectSensor)(radar_sensor::Model)) {
+  selectSensor_ = selectSensor;
   WiFi.persistent(false);
   WiFi.mode(WIFI_OFF);
   waitForRelease_ = true;
@@ -50,6 +51,8 @@ void StartupMenu::begin() {
 }
 
 void StartupMenu::drawHome() {
+  selectSensor_(radar_sensor::Model::Unknown);
+  sensor_ = radar_sensor::Model::Unknown;
   page_ = Page::Home;
   if (touchTest_) {
     title("Touch test");
@@ -71,11 +74,43 @@ void StartupMenu::drawHome() {
   button("Wi-Fi setup", 170);
 }
 
+void StartupMenu::drawSensor() {
+  selectSensor_(radar_sensor::Model::Unknown);
+  sensor_ = radar_sensor::Model::Unknown;
+  page_ = Page::Sensor;
+  waitForRelease_ = true;
+  title("Sensor");
+  text("Choose sensor", 16, 41);
+  button("LD2450 - Port B", 70);
+  button("LD2460 - Port C", 120);
+  button("Back", 170);
+}
+
+void StartupMenu::checkSensor() {
+  selectSensor_(sensor_);
+  sensorStartedMs_ = millis();
+  page_ = Page::SensorWaiting;
+  waitForRelease_ = true;
+  title(sensor_ == radar_sensor::Model::LD2450 ? "LD2450 - Port B" : "LD2460 - Port C");
+  text("Checking connection...", 16, 75);
+  button("Back", 170);
+}
+
+void StartupMenu::drawSensorError() {
+  page_ = Page::SensorError;
+  waitForRelease_ = true;
+  title(sensor_ == radar_sensor::Model::LD2450 ? "LD2450 - Port B" : "LD2460 - Port C");
+  text("No data. Check connection.", 16, 41, TFT_YELLOW);
+  button("Retry", 70);
+  button("Choose sensor", 120);
+  button("Back", 170);
+}
+
 void StartupMenu::drawSound() {
   page_ = Page::Sound;
   waitForRelease_ = true;
   title("Sound");
-  text("Choose sound", 16, 41);
+  text(sensor_ == radar_sensor::Model::LD2450 ? "LD2450 connected" : "LD2460 connected", 16, 41);
   button("On", 70);
   button("Off", 120);
   button("Back", 170);
@@ -132,8 +167,19 @@ bool StartupMenu::pollTouchConsole() {
   return changed;
 }
 
-bool StartupMenu::poll() {
+bool StartupMenu::poll(const radar_sensor::Parser& radar) {
   if (page_ == Page::Home && pollTouchConsole()) return false;
+  if (page_ == Page::SensorWaiting) {
+    if (radar.model == sensor_ && radar.fresh(millis())) {
+      drawSound();
+      return false;
+    }
+    if (uint32_t(millis() - sensorStartedMs_) >= 4000) {
+      Serial.println("Sensor connection timed out");
+      drawSensorError();
+      return false;
+    }
+  }
   if (waitForRelease_) {
     if (M5.Touch.getCount() == 0) waitForRelease_ = false;
     return false;
@@ -164,7 +210,7 @@ bool StartupMenu::poll() {
   const int y = touch.base_y;
   if (page_ == Page::Home) {
     if (y >= 70 && y < 112) {
-      drawSound();
+      drawSensor();
       return false;
     }
     if (y >= 120 && y < 162) {
@@ -183,8 +229,29 @@ bool StartupMenu::poll() {
       if (wifi_.begin()) { page_ = Page::Wifi; drawWifi(); }
       else { showMessage("Could not start Wi-Fi"); }
     }
+  } else if (page_ == Page::Sensor) {
+    if ((y >= 70 && y < 112) || (y >= 120 && y < 162)) {
+      sensor_ = y < 112 ? radar_sensor::Model::LD2450 : radar_sensor::Model::LD2460;
+      checkSensor();
+    } else if (y >= 170 && y < 212) {
+      waitForRelease_ = true;
+      drawHome();
+    }
+  } else if (page_ == Page::SensorWaiting) {
+    if (y >= 170 && y < 212) drawSensor();
+  } else if (page_ == Page::SensorError) {
+    if (y >= 70 && y < 112) checkSensor();
+    else if (y >= 120 && y < 162) drawSensor();
+    else if (y >= 170 && y < 212) {
+      waitForRelease_ = true;
+      drawHome();
+    }
   } else if (page_ == Page::Sound) {
     if ((y >= 70 && y < 112) || (y >= 120 && y < 162)) {
+      if (radar.model != sensor_ || !radar.fresh(millis())) {
+        drawSensorError();
+        return false;
+      }
       const bool enableSound = y < 112;
       if (enableSound) {
         M5.Speaker.setVolume(80);
@@ -201,8 +268,7 @@ bool StartupMenu::poll() {
       return true;
     }
     if (y >= 170 && y < 212) {
-      waitForRelease_ = true;
-      drawHome();
+      drawSensor();
     }
   } else if (page_ == Page::Wifi && y >= 204 && y < 234) {
     wifi_.stop();

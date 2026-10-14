@@ -10,11 +10,7 @@
 #include "sound_cues.h"
 #include "tracker_sounds.h"
 
-constexpr int kRadarRx = 18;  // PORT.C R <- LD2450 TX / LD2460 Tx2
-constexpr int kRadarTx = 17;  // PORT.C T -> LD2450 RX / LD2460 Rx2
-constexpr uint32_t kRadarProbeMs = 2000;
-uint32_t radarBaud = 256000;  // Probe both factory defaults, without sensor writes.
-uint32_t lastRadarProbeMs = 0;
+bool radarSerialActive = false;
 constexpr int kOriginX = 160;
 constexpr int kOriginY = 164;
 constexpr int kRadius = 154;
@@ -59,10 +55,7 @@ bool displayInitialized = false;
 StartupMenu startupMenu;
 bool trackerStarted = false;
 bool bootLogVisible = true;
-bool bootSensorReady = false;
-bool bootTouchReleased = false;
 uint32_t bootCompletedMs = 0;
-constexpr uint32_t kBootSensorTimeoutMs = 2 * kRadarProbeMs;
 constexpr uint32_t kBootLogHoldMs = 1000;
 
 void drawText(const char* text, int x, int y, uint16_t color, int size = 1,
@@ -459,25 +452,30 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
   presentScreen(240);
 }
 
+void selectSensor(radar_sensor::Model model) {
+  if (radarSerialActive) radarSerial.end();
+  radarSerialActive = false;
+  radar.select(model);
+  if (model == radar_sensor::Model::Unknown) return;
+  const auto connection = radar_sensor::connection(model);
+  radarSerial.setRxBufferSize(1024);
+  radarSerial.begin(connection.baud, SERIAL_8N1, connection.rx, connection.tx);
+  radarSerialActive = true;
+  Serial.printf("Sensor selected: %s (Port %s, %lu baud)\n", radar.name(),
+                model == radar_sensor::Model::LD2450 ? "B" : "C",
+                static_cast<unsigned long>(connection.baud));
+}
+
 void pollRadar() {
+  if (!radarSerialActive) return;
   // Bound the work so continuous UART noise cannot starve the display.
   for (size_t i = 0; i < 1024 && radarSerial.available(); ++i) {
     const int byte = radarSerial.read();
     if (byte < 0) break;
-    const bool unidentified = radar.model == radar_sensor::Model::Unknown;
-    if (radar.push(static_cast<uint8_t>(byte), millis()) && unidentified) {
-      Serial.printf("Sensor detected: %s (%lu baud)\n", radar.name(),
-                    static_cast<unsigned long>(radarBaud));
+    const bool firstReport = !radar.received;
+    if (radar.push(static_cast<uint8_t>(byte), millis()) && firstReport) {
+      Serial.printf("Sensor connected: %s\n", radar.name());
     }
-  }
-  if (radar.model == radar_sensor::Model::Unknown &&
-      uint32_t(millis() - lastRadarProbeMs) >= kRadarProbeMs) {
-    radarSerial.end();
-    radarBaud = radarBaud == 256000 ? 115200 : 256000;
-    radarSerial.begin(radarBaud, SERIAL_8N1, kRadarRx, kRadarTx);
-    // Never combine bytes received at different baud rates into a report.
-    radar.reset();
-    lastRadarProbeMs = millis();
   }
 }
 
@@ -750,21 +748,7 @@ void setup() {
     bootStatus("Radar graphics", "SKIP", 84, TFT_YELLOW);
   }
 
-  radarSerial.setRxBufferSize(1024);
-  radarSerial.begin(radarBaud, SERIAL_8N1, kRadarRx, kRadarTx);
-  lastRadarProbeMs = millis();
-  bootStatus("Sensor UART", "WAIT", 108);
-  const uint32_t sensorStartedMs = millis();
-  while (!bootSensorReady &&
-         static_cast<uint32_t>(millis() - sensorStartedMs) < kBootSensorTimeoutMs) {
-    M5.update();
-    pollRadar();
-    // A complete report with zero targets also confirms communication.
-    bootSensorReady = radar.received;
-    delay(1);
-  }
-  bootStatus("Sensor UART", bootSensorReady ? radar.name() : "TIMEOUT", 108,
-             bootSensorReady ? TFT_WHITE : TFT_YELLOW);
+  bootStatus("Sensor", "SELECT", 108);
   // An unplugged sensor must not reject an otherwise healthy OTA firmware.
   screenReady = FirmwareUpdate::confirmBoot(screenReady);
   bootStatus("Boot check", screenReady ? "OK" : "FAIL", 132,
@@ -773,12 +757,7 @@ void setup() {
     bootText("Boot failed", 180, TFT_RED);
     return;
   }
-  if (bootSensorReady) {
-    bootText("Ready", 180);
-  } else {
-    bootText("No radar report yet", 180, TFT_YELLOW);
-    bootText("Tap to open menu", 208);
-  }
+  bootText("Ready", 180);
   bootCompletedMs = millis();
 }
 
@@ -787,28 +766,16 @@ void loop() {
   if (!screenReady) { delay(10); return; }
   pollRadar();
   if (bootLogVisible) {
-    // A slowly starting sensor can still complete detection after boot timeout.
-    if (!bootSensorReady && radar.received) {
-      bootSensorReady = true;
-      bootStatus("Sensor UART", radar.name(), 108);
-      M5.Display.fillRect(0, 176, 320, 64, TFT_BLACK);
-      bootText("Ready", 180);
-      bootCompletedMs = millis();
-    }
-    if (M5.Touch.getCount() == 0) bootTouchReleased = true;
-    const bool openMenu = bootSensorReady
-        ? static_cast<uint32_t>(millis() - bootCompletedMs) >= kBootLogHoldMs
-        : bootTouchReleased && M5.Touch.getDetail().wasClicked();
-    if (openMenu) {
+    if (static_cast<uint32_t>(millis() - bootCompletedMs) >= kBootLogHoldMs) {
       bootLogVisible = false;
-      startupMenu.begin();
+      startupMenu.begin(selectSensor);
     }
     delay(1);
     return;
   }
   if (!trackerStarted) {
-    // Keep detecting in the menu; Start discards its old target snapshot.
-    if (startupMenu.poll()) {
+    // Keep receiving from the selected port; Start discards its old snapshot.
+    if (startupMenu.poll(radar)) {
       soundCues.setEnabled(startupMenu.soundEnabled());
       nextDetectionChannel = 1;
       trackerStarted = true;

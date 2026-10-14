@@ -11,8 +11,13 @@ This project uses [HLK-LD2450](https://www.hlktech.net/index.php?id=1182) or [HL
 
 You can experience the vibe of the film — "anytime, anywhere"!
 
+| Sensor | Port | Velocity measurement (cm/s) |
+| --- | --- | -- |
+| HLK-LD2450 | CoreS3 PORT.B | ✅ |
+| HLK-LD2460 | CoreS3 PORT.C | ❌ |
+
 > [!NOTE]  
-> Firmware detects both sensors default UART protocols automatically.
+> You can select the sensor to use when the device starts up screen.
 
 ## License
 Original source code is licensed under the [MIT License](LICENSE).
