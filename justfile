@@ -60,9 +60,9 @@ test:
     tests/release_info_test.cpp -o "$test_dir/release_info_test"
   "$test_dir/release_info_test"
 
-# USB コンソールから LD2450 の領域設定・解除・確認（Ctrl+C で終了）
+# ビルドと同じプロファイルで USB コンソールを開く（Ctrl+C で終了）
 monitor port:
-  arduino-cli monitor --port "$1" --config baudrate=115200
+  arduino-cli monitor --profile cores3 --port "$1" --config baudrate=115200 firmware/cores3
 
 # 固定した依存物でコンパイル
 build:

@@ -87,16 +87,19 @@ void StartupMenu::drawSensor() {
 }
 
 void StartupMenu::checkSensor() {
-  selectSensor_(sensor_);
-  sensorStartedMs_ = millis();
   page_ = Page::SensorWaiting;
   waitForRelease_ = true;
   title(sensor_ == radar_sensor::Model::LD2450 ? "LD2450 - Port B" : "LD2460 - Port C");
   text("Checking connection...", 16, 75);
   button("Back", 170);
+  selectSensor_(sensor_);
+  // Power switching may wait inside M5Unified. Give the sensor the full
+  // reception window after the supply has been enabled.
+  sensorStartedMs_ = millis();
 }
 
 void StartupMenu::drawSensorError() {
+  selectSensor_(radar_sensor::Model::Unknown);
   page_ = Page::SensorError;
   waitForRelease_ = true;
   title(sensor_ == radar_sensor::Model::LD2450 ? "LD2450 - Port B" : "LD2460 - Port C");
@@ -110,7 +113,7 @@ void StartupMenu::drawSound() {
   page_ = Page::Sound;
   waitForRelease_ = true;
   title("Sound");
-  text(sensor_ == radar_sensor::Model::LD2450 ? "LD2450 connected" : "LD2460 connected", 16, 41);
+  text(sensor_ == radar_sensor::Model::LD2450 ? "LD2450 - Port B" : "LD2460 - Port C", 16, 41);
   button("On", 70);
   button("Off", 120);
   button("Back", 170);
@@ -129,6 +132,7 @@ void StartupMenu::drawWifi() {
 }
 
 void StartupMenu::showMessage(const char* message) {
+  selectSensor_(radar_sensor::Model::Unknown);
   page_ = Page::Message;
   title("Motion Tracker");
   text(message, 16, 80);
@@ -152,8 +156,12 @@ bool StartupMenu::pollTouchConsole() {
                         static_cast<long>(M5.Display.width()), static_cast<long>(M5.Display.height()),
                         static_cast<unsigned>(M5.Display.getRotation()));
           if (touchTest_) Serial.println("Tap + at (160,91), (160,141), (160,191). Buttons are inactive.");
+        } else if (strcmp(touchCommand_, "power status") == 0) {
+          Serial.printf("Power: battery=%dmV, USB=%dmV, charging=%d, external_output=%u\n",
+                        int(M5.Power.getBatteryVoltage()), int(M5.Power.getVBUSVoltage()),
+                        int(M5.Power.isCharging()), unsigned(M5.Power.getExtOutput()));
         } else {
-          Serial.println("Menu commands: touch test | touch off");
+          Serial.println("Menu commands: touch test | touch off | power status");
         }
       }
       touchCommandLength_ = 0;
@@ -171,8 +179,18 @@ bool StartupMenu::poll(const radar_sensor::Parser& radar) {
   if (page_ == Page::Home && pollTouchConsole()) return false;
   if (page_ == Page::SensorWaiting) {
     if (radar.model == sensor_ && radar.fresh(millis())) {
-      drawSound();
-      return false;
+      if (soundEnabled_) {
+        M5.Speaker.setVolume(80);
+        if (!M5.Speaker.begin()) {
+          M5.Speaker.end();
+          showMessage("Sound unavailable");
+          return false;
+        }
+      } else {
+        M5.Speaker.end();
+      }
+      WiFi.mode(WIFI_OFF);
+      return true;
     }
     if (uint32_t(millis() - sensorStartedMs_) >= 4000) {
       Serial.println("Sensor connection timed out");
@@ -232,7 +250,7 @@ bool StartupMenu::poll(const radar_sensor::Parser& radar) {
   } else if (page_ == Page::Sensor) {
     if ((y >= 70 && y < 112) || (y >= 120 && y < 162)) {
       sensor_ = y < 112 ? radar_sensor::Model::LD2450 : radar_sensor::Model::LD2460;
-      checkSensor();
+      drawSound();
     } else if (y >= 170 && y < 212) {
       waitForRelease_ = true;
       drawHome();
@@ -248,24 +266,9 @@ bool StartupMenu::poll(const radar_sensor::Parser& radar) {
     }
   } else if (page_ == Page::Sound) {
     if ((y >= 70 && y < 112) || (y >= 120 && y < 162)) {
-      if (radar.model != sensor_ || !radar.fresh(millis())) {
-        drawSensorError();
-        return false;
-      }
-      const bool enableSound = y < 112;
-      if (enableSound) {
-        M5.Speaker.setVolume(80);
-        if (!M5.Speaker.begin()) {
-          M5.Speaker.end();
-          showMessage("Sound unavailable");
-          return false;
-        }
-      } else {
-        M5.Speaker.end();
-      }
-      soundEnabled_ = enableSound;
-      WiFi.mode(WIFI_OFF);
-      return true;
+      soundEnabled_ = y < 112;
+      checkSensor();
+      return false;
     }
     if (y >= 170 && y < 212) {
       drawSensor();
