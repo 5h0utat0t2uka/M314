@@ -11,7 +11,8 @@
 両方を接続したまま、起動メニューの `Start` → `Sensor` で使用するセンサーを選ぶ。
 LD2450はPort B・256000bps、LD2460はPort C・115200bpsで受信する。従来Port Cに接続していたLD2450は、センサー側の配線を変えずCoreS3側をPort Bへ差し替える。
 選択した機種の正常な検出フレームで通信を確認する。通信速度の自動探索やセンサー設定の書き換えは行わないため、各センサーの工場出荷時の通信速度で使用する。
-未選択側のUARTは受信しないが、両方のセンサーに給電される。選択による電源・電波の停止は行わない。
+起動・メニュー（Sensor・Sound・Wi-Fi設定・更新を含む）では共通の5V出力をOFFにする。`Sound` の `On` / `Off` を選んで開始すると両方へ給電し、選択側だけUARTで受信する。通信確認中のキャンセル、タイムアウト、メニューへ戻る操作ではUARTを終了し、両ポートの信号線を入力・プル抵抗なしに戻してから5V出力をOFFにする。
+この電源停止はUSBまたはバッテリー給電で使用する。DinBaseのDC入力やM-Bus/Groveから別途5Vを供給している場合、CoreS3の出力をOFFにしても外部からの給電は止められない。Port B/Cの電源は共通のため、検出中は未選択側にも給電される。
 根拠：[CoreS3公式ピン配置](https://docs.m5stack.com/en/core/CoreS3#hy2-0-4p)、[Espressif公式UART仕様](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/serial.html)。
 
 LD2460では最大5対象のX/Y座標を受信し、0.1m単位から表示用のmmへ変換する。速度は報告されないため `V --cm/s` と表示する。
@@ -25,10 +26,11 @@ LD2460では最大5対象のX/Y座標を受信し、0.1m単位から表示用の
 2. CoreS3の電源を切った状態でPort Cに接続し、CoreS3をUSBでMacに接続する。
 3. 開発環境で `just test` と `just build` を実行する。
 4. `just boards` でポートを確認し、`just upload <確認したポート>` で通常の書き込みを行う。
-5. `Start` → `LD2460 - Port C` を選ぶ。正常なデータを受信すると `LD2460 connected` とSound選択画面を表示する。`Off` で開始し、センサー前で動いて点と距離の変化を確認する。
+5. `Start` → `LD2460 - Port C` → Soundの `Off` を選ぶ。ここで給電と通信確認を開始し、正常なデータを受信すると検出画面へ進む。センサー前で動いて点と距離の変化を確認する。
 
 4秒で受信できなければ `No data. Check connection.` を表示する。`Retry` で再確認、`Choose sensor` で選び直し、`Back` で起動メニューに戻る。対象0のフレームでも通信確認は成功するため、人がいないこと自体は失敗の理由にならない。
-USBログは `just monitor <確認したポート>` で開く。選択時に `Sensor selected: LD2460 (Port C, 115200 baud)`、受信成功時に `Sensor connected: LD2460` と出る。
+USBログは `just monitor <確認したポート>` で開く。開始時に `Sensor selected: LD2460 (Port C, 115200 baud)`、受信成功時に `Sensor connected: LD2460` と出る。給電前後のバッテリー電圧も出力する。出力の有効化がライブラリ側で拒否された場合はUARTを開始せず、4秒後に再試行画面へ戻る。
+`just monitor` はスケッチのパスと `cores3` プロファイルを指定し、ビルドと同じ環境のシリアルモニターを使用する。プロファイルを使わずリポジトリ直下で起動すると、グローバル環境にモニターがない場合に `No monitor available for the port protocol serial` となる。
 これはセンサーからCoreS3への受信確認であり、CoreS3からセンサーへの送信線の導通や距離精度の検証ではない。
 
 開発環境は Apple Silicon の macOS（`aarch64-darwin`）と、64bit Linux（`x86_64-linux` / `aarch64-linux`）向けに定義している。Nix（flakes 有効）をインストールし、`nix develop` または direnv の `direnv allow` で入る。Intel Mac・32bit Linux は対象外。  
@@ -111,7 +113,7 @@ just editor
 ## 操作と表示
 - 起動時は`Display buffers`・`Radar graphics`・`Sensor SELECT`・`Boot check` を表示する。正常時は `Ready` を約1秒表示してメニューへ進む。センサー受信は選択後に確認する。ログはUSBシリアルにも出力する。
 - 画面バッファ確保や起動確認の失敗時は `FAIL` を表示して停止する（OTA検証中はロールバックが優先される）。起動ログ中のタップはメニュー操作へ引き継がない。センサー未接続でもWi-Fi設定・OTA更新は利用できる。
-- 起動メニューの `Start` → `Sensor` でセンサーを選択し、通信確認後に `Sound` 画面へ進む。`On`（効果音あり）または `Off`（無音）でトラッカーを開始する。Sound選択時にも受信が新鮮か確認し、途絶していれば再試行画面へ戻す。Sound画面の `Back` はセンサー選択へ戻る。選択は保存せず、起動のたびに選ぶ。検出画面からメニューへ戻るには本体を再起動する。
+- 起動メニューの `Start` → `Sensor` → `Sound` の順に選ぶ。`On`（効果音あり）または `Off`（無音）で両センサーへの給電と選択側の通信確認を開始し、受信成功後にトラッカーを開始する。Sound画面の `Back` は給電せずにセンサー選択へ戻る。選択は保存せず、起動のたびに選ぶ。検出画面からメニューへ戻るには本体を再起動する。
 - CoreS3のスクリーンをタップで表示距離が **6m, 2m, 4m** と切り替え。
 - スクリーン下部中央に最も近い対象の距離を表示。
 - スクリーン下部の左に表示範囲・相対角度、右に対象番号と検出数・速度をそれぞれ2行で表示。
@@ -190,6 +192,8 @@ just editor
 ボード設定は現在の構成と同じ `app3M_fat9M_16MB`（アプリ3MiB×2）に固定している。
 
 ### 実機で確認する項目
+- USBまたはバッテリー給電で、Home・Sensor・Sound・Wi-Fi設定・更新中は両センサーの5V供給が停止していること。給電停止はログの制御ビットだけでなく、可能なら5V-GND間の実測で確認する。
+- 開始時だけ両センサーが起動し、通信確認のキャンセル・タイムアウト・スピーカー初期化失敗では給電が停止すること。
 - LD2450をPort B、LD2460をPort Cへ接続し、各選択で通信確認と検出が開始できること。LD2450は速度を表示し、LD2460は `V --cm/s` を表示すること。
 - Sound画面からセンサー選択へ戻り、別機種を選んでも前の対象や速度が残らないこと。
 - 電源を切って片方を外してから起動し、未接続側では4秒後に再試行画面が表示され、接続済み側を選び直せること。
@@ -197,6 +201,15 @@ just editor
 - 再起動後の接続情報保持、`Start` 後の既存レーダー操作。
 - 最新版・更新なし・リリースなし・ネットワーク切断時の表示。
 - バージョンを上げた実際のリリースからのOTA、更新後のバージョンとWi-Fi設定・LD2450設定の保持。
+
+### バッテリー起動直後に画面が消える場合
+2026-10-18の実機報告では、センサーを両方外してもバッテリーだけでは消灯し、USB接続では起動する。したがってセンサー負荷だけを原因とはできず、バッテリーの残量・充電状態・給電経路を調べる。実際の原因は未確定。
+
+M5Unifiedを0.2.23から0.2.26、必要なM5GFXを0.2.30から0.2.31へ更新した。公式修正にはCoreS3の一部個体の充電阻害、充電電圧の明示設定、外部5V投入時の突入電流対策が含まれる。起動直後の電源断の公式再現条件は弱いUSB電源・バッテリーなしであり、この実機のバッテリー起動障害と同一原因だと断定しない。
+
+USBで更新後、起動メニューのまま `just monitor <ポート>` を開き、`power status` を送るとバッテリー電圧・USB入力電圧・充電状態・外部出力の制御状態を取得できる。`charging` は0=放電、1=充電、2=不明。これは瞬間的な電圧降下や実際の容量の測定にはならない。充電前後の値を比較し、電源を切ってUSBを外してからバッテリー起動を再確認する。
+
+根拠：[M5Unified 0.2.26](https://github.com/m5stack/M5Unified/releases/tag/0.2.26)、[0.2.24の起動時電源断修正](https://github.com/m5stack/M5Unified/releases/tag/0.2.24)、[充電を阻害するTS設定の公式Issue #387](https://github.com/m5stack/M5Unified/issues/387)。
 
 ## LD2450
 以下の `filter` / `bluetooth` コマンドは、LD2450と判別できたときだけ実行できる。LD2460接続時や機種未判別時はエラーを表示し、UARTコマンドを送信しない。
@@ -241,9 +254,9 @@ just monitor /dev/cu.usbmodem1101
 
 ## Ref
 - [M314 Motion Tracker](https://avp.fandom.com/wiki/M314_Motion_Tracker)
-- [M5GFX 0.2.30 の描画API（drawSmoothLine / fillSmoothCircle）](https://github.com/m5stack/M5GFX/blob/0.2.30/src/lgfx/v1/LGFXBase.hpp)
+- [M5GFX 0.2.31 の描画API（drawSmoothLine / fillSmoothCircle）](https://github.com/m5stack/M5GFX/blob/0.2.31/src/lgfx/v1/LGFXBase.hpp)
 - [M5Unified IMU API](https://docs.m5stack.com/en/arduino/m5unified/imu_class)
-- [M5Unified 0.2.23 の IMU 公式サンプル](https://github.com/m5stack/M5Unified/blob/0.2.23/examples/Basic/Imu/Imu.ino)
+- [M5Unified 0.2.26 の IMU 公式サンプル](https://github.com/m5stack/M5Unified/blob/0.2.26/examples/Basic/Imu/Imu.ino)
 - [HLK-LD2450 公式通信仕様 V1.03（2.3節：受信フレーム）](https://h.hlktech.com/download/HLK-LD2450-24G/1/LD2450%20%E4%B8%B2%E5%8F%A3%E9%80%9A%E4%BF%A1%E5%8D%8F%E8%AE%AE%20V1.03.pdf)
 - [CoreS3 のピン配置（PORT.B / PORT.C）](https://docs.m5stack.com/en/core/CoreS3#pinmap)
 - [M5Stack CoreS3 の Arduino 手順](https://docs.m5stack.com/en/arduino/m5cores3/program)
@@ -251,5 +264,5 @@ just monitor /dev/cu.usbmodem1101
 - [Arduino CLI ビルドプロファイル仕様](https://github.com/arduino/arduino-cli/blob/master/docs/sketch-project-file.md)
 - [Arduino CLI 1.5.1 の FQBN 結合処理](https://github.com/arduino/arduino-cli/blob/v1.5.1/internal/cli/arguments/fqbn.go)
 - [Arduino ctags の Apple Silicon 対応状況](https://github.com/arduino/ctags/issues/20)
-- [M5Unified 0.2.23](https://github.com/m5stack/M5Unified/releases/tag/0.2.23)
-- [M5GFX 0.2.30](https://github.com/m5stack/M5GFX/releases/tag/0.2.30)
+- [M5Unified 0.2.26](https://github.com/m5stack/M5Unified/releases/tag/0.2.26)
+- [M5GFX 0.2.31](https://github.com/m5stack/M5GFX/releases/tag/0.2.31)

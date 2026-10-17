@@ -455,8 +455,27 @@ void drawStatus(uint32_t nowMs, bool updatePanel = true) {
 void selectSensor(radar_sensor::Model model) {
   if (radarSerialActive) radarSerial.end();
   radarSerialActive = false;
+  // UART TX idles high. Release both ports before removing the shared 5 V
+  // supply so signal pins cannot feed an unpowered sensor through its inputs.
+  for (const auto sensor : {radar_sensor::Model::LD2450, radar_sensor::Model::LD2460}) {
+    const auto pins = radar_sensor::connection(sensor);
+    pinMode(pins.rx, INPUT);
+    pinMode(pins.tx, INPUT);
+  }
   radar.select(model);
-  if (model == radar_sensor::Model::Unknown) return;
+  if (model == radar_sensor::Model::Unknown) {
+    if (M5.Power.getExtOutput()) M5.Power.setExtOutput(false);
+    Serial.printf("Sensor power: OFF requested, output=%u, battery=%dmV\n",
+                  unsigned(M5.Power.getExtOutput()), int(M5.Power.getBatteryVoltage()));
+    return;
+  }
+  Serial.printf("Sensor power: enabling, battery=%dmV\n", int(M5.Power.getBatteryVoltage()));
+  M5.Power.setExtOutput(true);
+  if (!M5.Power.getExtOutput()) {
+    Serial.println("Sensor power: enable rejected; UART remains stopped");
+    return;
+  }
+  Serial.printf("Sensor power: ON, battery=%dmV\n", int(M5.Power.getBatteryVoltage()));
   const auto connection = radar_sensor::connection(model);
   radarSerial.setRxBufferSize(1024);
   radarSerial.begin(connection.baud, SERIAL_8N1, connection.rx, connection.tx);
@@ -704,10 +723,11 @@ void setup() {
   config.internal_mic = false;
   config.internal_spk = true;  // Configure pins; keep output off until Sound > On.
   config.internal_imu = true;
-  config.output_power = true;  // Supply 5 V to the external ports.
+  config.output_power = false;  // Keep the shared external 5 V supply off in menus.
   M5.begin(config);
   M5.Speaker.end();
   Serial.begin(115200);
+  selectSensor(radar_sensor::Model::Unknown);
   // Keep library offsets fixed while our stationary bias estimate is in use.
   M5.Imu.setCalibration(0, 0, 0);
   M5.Touch.setHoldThresh(800);
@@ -721,6 +741,9 @@ void setup() {
   M5.Display.setTextDatum(lgfx::textdatum_t::top_left);
   M5.Display.setTextWrap(false);
   bootText("M314 Booting...", 16);
+  char batteryText[32];
+  snprintf(batteryText, sizeof(batteryText), "Battery: %d mV", int(M5.Power.getBatteryVoltage()));
+  bootText(batteryText, 156);
   screen.setColorDepth(16);
   screen.setPsram(true);
   screenReady = screen.createSprite(320, 240) != nullptr;
